@@ -4,3 +4,5 @@ opencv-python
 pymongo
 # Add any additional dependencies here
 open3d
+numpy
+matplotlib
