@@ -1,8 +1,5 @@
-# Required dependencies for the application
-Flask
-opencv-python
-pymongo
-# Add any additional dependencies here
-open3d
-numpy
-matplotlib
+Flask==2.0.1
+opencv-python==4.5.3.56
+pymongo==4.0.1
+numpy==1.21.2
+matplotlib==3.4.3

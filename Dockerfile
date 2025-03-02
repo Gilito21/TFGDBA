@@ -1,21 +1,20 @@
-# Use the official Python image as a base
-FROM python:3.12-slim
-
-# Set the working directory
+# Set up working directory
 WORKDIR /app
 
-# Copy the requirements file
+# Copy requirements (create this file first)
 COPY requirements.txt .
 
-# Install the required packages
-RUN apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0 && \
-    pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the application code
-COPY app_working_retrieve_frames_mongodb.py .
+# Copy application code
+COPY . .
 
-# Expose the port the app runs on
+# Create necessary directories
+RUN mkdir -p uploads frames models
+
+# Expose port
 EXPOSE 5000
 
-# Command to run the application
-CMD ["python", "app_working_retrieve_frames_mongodb.py"]
+# Run application
+CMD ["python", "app.py"]
