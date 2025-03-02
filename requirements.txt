@@ -1,3 +1,4 @@
 Flask
-pymongo
 opencv-python
+pymongo
+open3d

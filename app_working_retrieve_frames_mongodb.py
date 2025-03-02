@@ -13,7 +13,7 @@ os.makedirs(FRAME_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # Connect to MongoDB using environment variable
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+MONGO_URI = "mongodb+srv://juanp:iGy1RQfwvSKuVlHh@cluster0.iiks7.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 client = pymongo.MongoClient(MONGO_URI)
 db = client["video_frames"]
 frames_collection = db["frames"]
@@ -55,7 +55,8 @@ def upload_form():
     </head>
     <body>
         <div class="container">
-            <h1>Upload a Video to Extract Frames</h1>
+            <h1 style="color: #007BFF;">Upload a Video to Extract Frames</h1>
+            <p style="color: red;">Please ensure the video is in a supported format (e.g., MP4, AVI, MOV).</p>
             <form action="/process_video" method="post" enctype="multipart/form-data">
                 <input type="file" name="video" required><br><br>
                 <input type="submit" value="Extract Frames">
@@ -68,16 +69,20 @@ def upload_form():
 @app.route('/process_video', methods=['POST'])
 def process_video():
     if 'video' not in request.files:
-        return "No file uploaded", 400
+        return jsonify({"error": "No file uploaded"}), 400
     
     video = request.files['video']
     if video.filename == '':
-        return "No selected file", 400
+        return jsonify({"error": "No selected file. Please upload a video file."}), 400
     
     video_path = os.path.join(UPLOAD_FOLDER, video.filename)
     video.save(video_path)
     
-    extract_frames(video_path, FRAME_FOLDER)
+    try:
+        extract_frames(video_path, FRAME_FOLDER)
+    except Exception as e:
+        app.logger.error(f"Error processing video: {str(e)}")
+        return jsonify({"error": "An error occurred while processing the video. Please try again."}), 500
     
     return render_template_string('''
     <!doctype html>
@@ -102,12 +107,32 @@ def process_video():
     </html>
     ''')
 
+@app.route('/create_model', methods=['POST'])
+def create_model():
+    """ Create a 3D model from the extracted frames """
+    frames = retrieve_frames()
+    if not frames:
+        return jsonify({"error": "No frames found"}), 404
+    
+    # Here you would add the photogrammetry processing logic
+    # For example, using Open3D or another library to create the 3D model
+    # This is a placeholder for the actual implementation
+    obj_file_path = "path/to/generated_model.obj"
+    
+    return jsonify({"message": "3D model created successfully", "model_path": obj_file_path}), 200
+
 @app.route('/frames')
+def retrieve_frames():
+    """ Retrieve all stored frames from MongoDB """
+    frames = frames_collection.find({}, {"filename": 1, "_id": 0})
+    return [frame["filename"] for frame in frames]
+
 def list_frames():
     """ List all stored frames """
     frames = frames_collection.find({}, {"filename": 1, "_id": 0})
-    frame_list = [frame["filename"] for frame in frames]
-    return render_template_string('''
+    frame_list = retrieve_frames()
+    return render_template_string(''' 
+    <h1>Extracted Frames</h1>
     <!doctype html>
     <html>
     <head>
@@ -145,7 +170,3 @@ def get_frame(filename):
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
-
-
-
-
