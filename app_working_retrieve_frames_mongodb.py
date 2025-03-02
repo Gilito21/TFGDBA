@@ -61,7 +61,10 @@ def upload_form():
                 <input type="file" name="video" required><br><br>
                 <input type="submit" value="Extract Frames">
             </form>
-        </div>
+                <form action="/create_model" method="post">
+                <input type="submit" value="Create 3D Model">
+            </form>
+            <div>
     </body>
     </html>
     ''')
@@ -108,12 +111,14 @@ def process_video():
     ''')
 
 @app.route('/create_model', methods=['POST'])
+@app.route('/create_model', methods=['POST'])
 def create_model():
     """ Create a 3D model from the extracted frames """
     frames = retrieve_frames()
     if not frames:
         return jsonify({"error": "No frames found"}), 404
     
+    # Placeholder for the actual implementation
     # Here you would add the photogrammetry processing logic
     # For example, using Open3D or another library to create the 3D model
     # This is a placeholder for the actual implementation
@@ -133,6 +138,12 @@ def list_frames():
     frame_list = retrieve_frames()
     return render_template_string(''' 
     <h1>Extracted Frames</h1>
+    <form action="/create_model" method="post">
+        <input type="submit" value="Create 3D Model">
+    </form>
+    <form action="/create_model" method="post">
+        <input type="submit" value="Create 3D Model">
+    </form>
     <!doctype html>
     <html>
     <head>

@@ -1,4 +1,6 @@
+# Required dependencies for the application
 Flask
 opencv-python
 pymongo
+# Add any additional dependencies here
 open3d
