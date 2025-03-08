@@ -135,6 +135,22 @@ def process_video():
     
     try:
         extracted_count = extract_frames(video_path, FRAME_FOLDER, frame_interval)
+        
+        # Get a subset of images to display (max 15)
+        frame_files = os.listdir(FRAME_FOLDER)
+        frame_files = sorted([f for f in frame_files if f.endswith(('.jpg', '.png', '.jpeg'))])
+        
+        # If more than 15 images, select evenly distributed samples
+        preview_frames = []
+        if len(frame_files) > 15:
+            step = len(frame_files) // 15
+            preview_frames = [frame_files[i] for i in range(0, len(frame_files), step)][:15]
+        else:
+            preview_frames = frame_files
+            
+        # Generate preview URLs
+        preview_urls = [f"/frames/{frame}" for frame in preview_frames]
+        
     except Exception as e:
         app.logger.error(f"Error processing video: {str(e)}")
         return jsonify({"error": f"An error occurred while processing the video: {str(e)}"}), 500
@@ -146,7 +162,7 @@ def process_video():
         <title>Processing Complete</title>
         <style>
             body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
-            .container { max-width: 700px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+            .container { max-width: 800px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
             h1 { color: #2d3748; }
             .success-icon { font-size: 60px; color: #48bb78; margin: 20px 0; }
             p { color: #4a5568; margin-bottom: 25px; }
@@ -154,6 +170,11 @@ def process_video():
             button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
             .create-model-btn { background: #48bb78; }
             .create-model-btn:hover { background: #38a169; }
+            .delete-btn { background: #e53e3e; }
+            .delete-btn:hover { background: #c53030; }
+            .preview-container { display: flex; flex-wrap: wrap; justify-content: center; margin: 20px 0; }
+            .preview-image { width: 120px; height: 90px; object-fit: cover; margin: 5px; border-radius: 4px; border: 1px solid #e2e8f0; }
+            .more-indicator { font-style: italic; color: #718096; margin: 10px 0; }
         </style>
     </head>
     <body>
@@ -162,14 +183,64 @@ def process_video():
             <h1>Frames Extracted Successfully</h1>
             <p>Extracted {{ count }} frames from your video.</p>
             
+            <h3>Preview of Extracted Frames</h3>
+            <div class="preview-container">
+                {% for url in preview_urls %}
+                <img src="{{ url }}" class="preview-image" alt="Frame preview">
+                {% endfor %}
+            </div>
+            {% if count > 15 %}
+            <div class="more-indicator">Showing 15 of {{ count }} frames</div>
+            {% endif %}
+            
             <div>
-                <a href="/frames"><button>View Frames</button></a>
+                <a href="/frames"><button>View All Frames</button></a>
                 <a href="/create_model"><button class="create-model-btn">Create 3D Model</button></a>
+                <button class="delete-btn" onclick="deleteFrames()">Delete Frames</button>
             </div>
         </div>
+        
+        <script>
+        function deleteFrames() {
+            if (confirm('Are you sure you want to delete all extracted frames? This cannot be undone.')) {
+                fetch('/delete_frames', {
+                    method: 'POST',
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Frames deleted successfully');
+                        // Redirect to home page
+                        window.location.href = '/';
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred while deleting frames');
+                });
+            }
+        }
+        </script>
     </body>
     </html>
-    ''', count=extracted_count)
+    ''', count=extracted_count, preview_urls=preview_urls)
+
+# Add a new route to handle frame deletion
+@app.route('/delete_frames', methods=['POST'])
+def delete_frames():
+    try:
+        # Delete all files in the FRAME_FOLDER
+        for filename in os.listdir(FRAME_FOLDER):
+            file_path = os.path.join(FRAME_FOLDER, filename)
+            if os.path.isfile(file_path):
+                os.unlink(file_path)
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        app.logger.error(f"Error deleting frames: {str(e)}")
+        return jsonify({"success": False, "error": str(e)})
 
 def get_frame_data_from_mongo():
     """Retrieve all frame filenames from MongoDB"""
