@@ -1,8 +1,8 @@
-Flask==2.0.1
+Flask==2.3.3
 boto3
 opencv-python
 numpy
-werkzeug
+werkzeug==2.3.7
 gunicorn
 pycolmap
 pymongo
