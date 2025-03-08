@@ -203,7 +203,7 @@ def process_video():
         <script>
         function deleteFrames() {
             if (confirm('Are you sure you want to delete all extracted frames? This cannot be undone.')) {
-                fetch('/delete_frames', {
+                fetch('/delete_mongo_frames', {
                     method: 'POST',
                 })
                 .then(response => response.json())
@@ -227,20 +227,7 @@ def process_video():
     </html>
     ''', count=extracted_count, preview_urls=preview_urls)
 
-# Add a new route to handle frame deletion
-@app.route('/delete_frames', methods=['POST'])
-def delete_frames():
-    try:
-        # Delete all files in the FRAME_FOLDER
-        for filename in os.listdir(FRAME_FOLDER):
-            file_path = os.path.join(FRAME_FOLDER, filename)
-            if os.path.isfile(file_path):
-                os.unlink(file_path)
-        
-        return jsonify({"success": True})
-    except Exception as e:
-        app.logger.error(f"Error deleting frames: {str(e)}")
-        return jsonify({"success": False, "error": str(e)})
+
 
 def get_frame_data_from_mongo():
     """Retrieve all frame filenames from MongoDB"""
@@ -279,6 +266,16 @@ def list_frames():
         </html>
         ''')
     
+    # Get the total number of frames
+    total_frames = len(frame_list)
+    
+    # Limit display to 20 frames
+    display_frames = frame_list
+    if total_frames > 20:
+        # Select evenly distributed frames
+        step = total_frames // 20
+        display_frames = [frame_list[i] for i in range(0, total_frames, step)][:20]
+    
     return render_template_string('''
     <!doctype html>
     <html>
@@ -287,44 +284,93 @@ def list_frames():
         <style>
             body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
             .container { max-width: 900px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
-            h1 { color: #2d3748; margin-bottom: 10px; }
-            .frame-info { color: #4a5568; margin-bottom: 25px; }
-            .frame-container { display: flex; flex-wrap: wrap; justify-content: center; }
-            .frame-item { margin: 12px; transition: all 0.3s ease; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-            .frame-item:hover { transform: scale(1.05); box-shadow: 0 10px 15px rgba(0,0,0,0.1); }
-            img { width: 180px; height: auto; display: block; }
-            .frame-caption { padding: 8px; background: #edf2f7; font-size: 12px; color: #4a5568; }
+            h1 { color: #2d3748; }
+            p { color: #4a5568; margin-bottom: 25px; }
+            .frame-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 30px; }
+            .frame-item { width: 180px; margin-bottom: 20px; }
+            .frame-img { width: 180px; height: 135px; object-fit: cover; border-radius: 8px; border: 1px solid #e2e8f0; }
+            .frame-name { font-size: 12px; color: #718096; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .button-container { margin-top: 30px; }
             button { display: inline-block; padding: 12px 20px; font-size: 16px; color: white; background: #4299e1; text-decoration: none; border-radius: 8px; margin: 8px; border: none; cursor: pointer; font-weight: 600; transition: all 0.3s ease; }
             button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-            .create-btn { background: #48bb78; }
-            .create-btn:hover { background: #38a169; }
-            .actions { margin: 20px 0; }
+            .create-model-btn { background: #48bb78; }
+            .create-model-btn:hover { background: #38a169; }
+            .delete-btn { background: #e53e3e; }
+            .delete-btn:hover { background: #c53030; }
+            .more-indicator { font-style: italic; color: #718096; margin: 20px 0; }
         </style>
     </head>
     <body>
         <div class="container">
             <h1>Extracted Frames</h1>
-            <p class="frame-info">{{ frames|length }} frames available</p>
+            <p>These frames were extracted from your uploaded video.</p>
             
-            <div class="actions">
-                <a href="/"><button>Back to Upload</button></a>
-                <a href="/create_model"><button class="create-btn">Create 3D Model</button></a>
-            </div>
-            
-            <div class="frame-container">
+            <div class="frame-grid">
                 {% for frame in frames %}
-                    <div class="frame-item">
-                        <a href="/frame/{{ frame }}" target="_blank">
-                            <img src="/frame/{{ frame }}" alt="{{ frame }}">
-                        </a>
-                        <div class="frame-caption">{{ frame }}</div>
-                    </div>
+                <div class="frame-item">
+                    <img src="data:image/jpeg;base64,{{ frame.image_data }}" class="frame-img" alt="{{ frame.filename }}">
+                    <div class="frame-name">{{ frame.filename }}</div>
+                </div>
                 {% endfor %}
             </div>
+            
+            {% if total > 20 %}
+            <div class="more-indicator">Showing 20 of {{ total }} frames</div>
+            {% endif %}
+            
+            <div class="button-container">
+                <a href="/"><button>Back to Upload</button></a>
+                <a href="/create_model"><button class="create-model-btn">Create 3D Model</button></a>
+                <button class="delete-btn" onclick="deleteFrames()">Delete All Frames</button>
+            </div>
         </div>
+        
+        <script>
+        function deleteFrames() {
+            if (confirm('Are you sure you want to delete all frames from the database? This cannot be undone.')) {
+                fetch('/delete_mongo_frames', {
+                    method: 'POST',
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('All frames have been deleted from the database');
+                        window.location.href = '/';
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred while deleting frames');
+                });
+            }
+        }
+        </script>
     </body>
     </html>
-    ''', frames=frame_list)
+    ''', frames=display_frames, total=total_frames)
+
+# Add a new route to handle MongoDB frame deletion
+@app.route('/delete_mongo_frames', methods=['POST'])
+def delete_mongo_frames():
+    try:
+        # Connect to MongoDB and delete all frames
+        # This assumes you have a MongoDB collection for frames
+        client = pymongo.MongoClient("mongodb://localhost:27017/")
+        db = client["frame_database"]  # Replace with your actual database name
+        collection = db["frames"]      # Replace with your actual collection name
+        
+        # Delete all documents in the collection
+        result = collection.delete_many({})
+        
+        return jsonify({
+            "success": True, 
+            "deleted_count": result.deleted_count
+        })
+    except Exception as e:
+        app.logger.error(f"Error deleting frames from MongoDB: {str(e)}")
+        return jsonify({"success": False, "error": str(e)})
 
 def prepare_colmap_workspace():
     """Prepare the COLMAP workspace by copying frames from MongoDB"""
