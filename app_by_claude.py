@@ -137,9 +137,9 @@ def process_video():
     try:
         extracted_count = extract_frames(video_path, FRAME_FOLDER, frame_interval)
         
-        # Get a subset of images to display (max 15)
+        # List the images in FRAME_FOLDER
         frame_files = os.listdir(FRAME_FOLDER)
-        frame_files = sorted([f for f in frame_files if f.endswith(('.jpg', '.png', '.jpeg'))])
+        frame_files = sorted([f for f in frame_files if f.lower().endswith(('.jpg', '.png', '.jpeg'))])
         
         # If more than 15 images, select evenly distributed samples
         preview_frames = []
@@ -148,9 +148,10 @@ def process_video():
             preview_frames = [frame_files[i] for i in range(0, len(frame_files), step)][:15]
         else:
             preview_frames = frame_files
-            
-        # Generate preview URLs
-        preview_urls = [f"/frames/{frame}" for frame in preview_frames]
+        
+        # Generate preview URLs so the template can <img> them
+        # We'll define a route /frame_local/<filename> to serve files from disk
+        preview_urls = [f"/frame_local/{frame}" for frame in preview_frames]
         
     except Exception as e:
         app.logger.error(f"Error processing video: {str(e)}")
@@ -228,14 +229,23 @@ def process_video():
     </html>
     ''', count=extracted_count, preview_urls=preview_urls)
 
-
+#
+# Route to serve frames from disk for preview
+#
+@app.route('/frame_local/<filename>')
+def frame_local(filename):
+    """
+    Serve a frame image from disk (FRAME_FOLDER) so that the browser
+    can render it in the <img> tag. 
+    """
+    path = os.path.join(FRAME_FOLDER, filename)
+    # or validate if path exists, etc.
+    return send_file(path, mimetype='image/jpeg')
 
 def get_frame_data_from_mongo():
     """Retrieve all frame filenames from MongoDB"""
     frames = list(frames_collection.find({}, {"filename": 1, "_id": 0}))
     return [frame["filename"] for frame in frames]
-
-from base64 import b64encode
 
 @app.route('/frames')
 def list_frames():
@@ -421,7 +431,7 @@ def prepare_colmap_workspace():
     
     return workspace_dir, frame_paths
 
-def run_colmap_reconstruction(workspace_dir: Path, USE_GPU: bool):
+def run_colmap_reconstruction(workspace_dir: Path):
     """
     Run a COLMAP reconstruction pipeline using dictionary-based options
     (compatible with PyColmap 3.11.1, which lacks SiftExtractionOptions, etc.):
@@ -521,7 +531,7 @@ def create_model():
             return jsonify({"error": "Failed to load at least 5 valid frames"}), 400
         
         # Run COLMAP
-        model_path = run_colmap_reconstruction(workspace_dir)
+        model_path = use_gpu_reconstruction(workspace_dir)
         
         # Create a visualization
         fig = plt.figure(figsize=(12, 10))
