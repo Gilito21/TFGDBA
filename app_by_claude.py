@@ -388,7 +388,7 @@ def run_colmap_reconstruction(workspace_dir):
     pycolmap.extract_features(
         database_path=str(database_path), 
         image_path=str(images_path),
-        sift_options=sift_options
+        sift_options=sift_options,
         device=device
     )
     
@@ -397,7 +397,8 @@ def run_colmap_reconstruction(workspace_dir):
     pycolmap.match_features(
         database_path=str(database_path),
         sift_options=sift_options,
-        matcher_options=matcher_options
+        matcher_options=matcher_options,
+        device=device
     )
     
     # 3. Reconstruction
