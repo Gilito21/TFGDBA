@@ -437,7 +437,7 @@ def prepare_colmap_workspace():
     
     return workspace_dir, frame_paths
 
-def run_colmap_reconstruction(workspace_dir: Path, use_gpu: bool = True):
+def run_colmap_reconstruction(workspace_dir: Path):
     """
     Run a COLMAP reconstruction pipeline with PyColmap 3.11.1-style direct arguments:
       1) extract_features(...)
@@ -459,7 +459,7 @@ def run_colmap_reconstruction(workspace_dir: Path, use_gpu: bool = True):
     sparse_path.mkdir(parents=True, exist_ok=True)
 
     # Decide on CPU or GPU
-    device = Device.auto if use_gpu else Device.cpu
+    device = Device.auto
 
     # 1) SIFT Extraction
     #    We'll build a SiftExtractionOptions object and pass it as sift_options
@@ -536,10 +536,10 @@ def create_model():
         
         # Decide whether to use GPU or CPU
         # (For example, always use GPU if available)
-        use_gpu = True  # or False if you want CPU only
+        
         
         # Run COLMAP reconstruction
-        model_path = run_colmap_reconstruction(workspace_dir, use_gpu=use_gpu)
+        model_path = run_colmap_reconstruction(workspace_dir)
         
         # Create a visualization from the resulting PLY
         fig = plt.figure(figsize=(12, 10))
