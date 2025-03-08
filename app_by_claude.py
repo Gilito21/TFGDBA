@@ -430,11 +430,13 @@ def prepare_colmap_workspace():
 
 def run_colmap_reconstruction(workspace_dir: Path, USE_GPU: bool):
     """
-    Run a COLMAP reconstruction pipeline using PyColmap:
+    Run a COLMAP reconstruction pipeline using dictionary-based options
+    (compatible with PyColmap 3.11.1, which lacks SiftExtractionOptions, etc.):
+
     1) extract_features
     2) match_features
     3) incremental_mapping
-    and return the path to 'model.ply'.
+    Returns the path to 'model.ply'.
     """
 
     database_path = workspace_dir / "database.db"
@@ -448,59 +450,63 @@ def run_colmap_reconstruction(workspace_dir: Path, USE_GPU: bool):
         shutil.rmtree(sparse_path)
     sparse_path.mkdir(parents=True, exist_ok=True)
 
-    # Decide on CPU or GPU device
-    device = Device.cuda if USE_GPU else Device.cpu
-
-    # Sift extraction options
-    sift_extraction_opts = SiftExtractionOptions(
-        estimate_affine_shape=True,
-        upright=False
-        # Other fields: max_image_size, domain_size_pooling, etc.
-    )
-
-    # Sift matching options
-    sift_matching_opts = SiftMatchingOptions(
-        cross_check=False,
-        max_num_matches=32768
-        # Remove 'multiple_models' or 'guided_matching' if your version doesn't support them
-    )
-
-    # Mapper options
-    mapper_opts = MapperOptions(
-        min_num_matches=15,
-        ignore_watermarks=True,
-        multiple_models=True
-        # ba_global_use_pba=True, ba_local_use_pba=True if you want GPU-based BA
-    )
-
+    # 1) Feature Extraction: SIFT
+    # Dictionary with "SiftExtraction" sub-keys
+    # If your version doesn't support some keys, remove them (e.g. 'use_gpu', 'estimate_affine_shape', 'upright').
+    feature_extraction_options = {
+        "SiftExtraction": {
+            "use_gpu": USE_GPU,
+            "estimate_affine_shape": True,
+            "upright": False
+        }
+    }
     print("Running feature extraction...")
     pycolmap.extract_features(
         database_path=str(database_path),
         image_path=str(images_path),
-        sift_options=sift_extraction_opts,
-        device=device
+        options=feature_extraction_options
     )
 
+    # 2) Feature Matching: SIFT
+    # Another dictionary with "SiftMatching" sub-keys
+    # If your version doesn't support 'use_gpu', 'guided_matching', 'max_num_matches', etc., remove them.
+    feature_matching_options = {
+        "SiftMatching": {
+            "use_gpu": USE_GPU,
+            "cross_check": False,
+            "max_num_matches": 32768
+        }
+    }
     print("Running feature matching...")
     pycolmap.match_features(
         database_path=str(database_path),
-        sift_options=sift_matching_opts,
-        device=device
+        options=feature_matching_options
     )
 
+    # 3) Incremental Mapping
+    # The "Mapper" settings go under "Mapper" in a dict.
+    # If your version doesn't support 'multiple_models' or 'ignore_watermarks', remove them.
+    mapper_dict = {
+        "Mapper": {
+            "min_num_matches": 15,
+            "ignore_watermarks": True,
+            "multiple_models": True
+            # "ba_global_use_pba": USE_GPU, etc., if recognized
+        }
+    }
     print("Running incremental mapping...")
     reconstructions = pycolmap.incremental_mapping(
         database_path=str(database_path),
         image_path=str(images_path),
         output_path=str(sparse_path),
-        mapper_options=mapper_opts
+        options=mapper_dict
     )
 
     model_path = workspace_dir / "model.ply"
     if len(reconstructions) == 0:
         raise RuntimeError("No reconstruction could be created from the provided frames.")
 
-    # Get the largest reconstruction
+    # Get the largest reconstruction and export as PLY
     largest_model = max(reconstructions, key=lambda rc: len(rc.images))
     largest_model.export_PLY(str(model_path))
     print(f"Exported model to {model_path}")
