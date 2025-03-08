@@ -459,7 +459,7 @@ def run_colmap_reconstruction(workspace_dir: Path, use_gpu: bool = True):
     sparse_path.mkdir(parents=True, exist_ok=True)
 
     # Decide on CPU or GPU
-    device = Device.cuda if use_gpu else Device.cpu
+    device = Device.auto if use_gpu else Device.cpu
 
     # 1) SIFT Extraction
     #    We'll build a SiftExtractionOptions object and pass it as sift_options
