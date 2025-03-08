@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+myenv/
+
+# Virtual Environment (Windows)
+env/
+*.venv
+*.env
+
+# Logs
+logs/
+*.log
+
+# Colmap & OpenCV
+*.db
+frames/
+models/
+
+# Vercel & Node.js
+node_modules/
+.vercel/
+.vercel/cache/
+package-lock.json
+
+# AWS Secrets
+.env
