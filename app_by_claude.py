@@ -381,8 +381,7 @@ def delete_mongo_frames():
     try:
         # Connect to MongoDB and delete all frames
         # This assumes you have a MongoDB collection for frames
-        client = pymongo.MongoClient("mongodb://localhost:27017/")
-        db = client["frame_database"]  # Replace with your actual database name
+        db = client["video_frames"]  # Replace with your actual database name
         collection = db["frames"]      # Replace with your actual collection name
         
         # Delete all documents in the collection
