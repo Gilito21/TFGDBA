@@ -531,7 +531,7 @@ def create_model():
             return jsonify({"error": "Failed to load at least 5 valid frames"}), 400
         
         # Run COLMAP
-        model_path = use_gpu_reconstruction(workspace_dir)
+        model_path = run_colmap_reconstruction(workspace_dir)
         
         # Create a visualization
         fig = plt.figure(figsize=(12, 10))
