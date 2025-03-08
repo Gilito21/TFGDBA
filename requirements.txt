@@ -4,5 +4,5 @@ opencv-python
 numpy
 werkzeug
 gunicorn
-colmap
+pycolmap
 
