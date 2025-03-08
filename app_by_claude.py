@@ -11,12 +11,6 @@ from pathlib import Path
 from flask import Flask, request, render_template_string, jsonify, Response, send_file
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from pycolmap import (
-    SiftExtractionOptions,
-    SiftMatchingOptions,
-    MapperOptions,
-    Device
-)
 from base64 import b64encode
 
 app = Flask(__name__)
