@@ -5,6 +5,12 @@ import numpy as np
 import tempfile
 import datetime
 import pycolmap
+from pycolmap import (
+    SiftExtractionOptions,
+    SiftMatchingOptions,
+    CameraMode,
+    Device
+)
 import torch
 import shutil
 from pathlib import Path
@@ -431,14 +437,13 @@ def prepare_colmap_workspace():
     
     return workspace_dir, frame_paths
 
-def run_colmap_reconstruction(workspace_dir: Path):
+def run_colmap_reconstruction(workspace_dir: Path, use_gpu: bool = True):
     """
-    Run a COLMAP reconstruction pipeline using dictionary-based options
-    (compatible with PyColmap 3.11.1, which lacks SiftExtractionOptions, etc.):
+    Run a COLMAP reconstruction pipeline with PyColmap 3.11.1-style direct arguments:
+      1) extract_features(...)
+      2) match_features(...)
+      3) incremental_mapping(...)
 
-    1) extract_features
-    2) match_features
-    3) incremental_mapping
     Returns the path to 'model.ply'.
     """
 
@@ -446,81 +451,80 @@ def run_colmap_reconstruction(workspace_dir: Path):
     images_path   = workspace_dir / "images"
     sparse_path   = workspace_dir / "sparse"
 
-    # Clean up old DB/sparse if needed
+    # Clean up old DB / sparse data
     if database_path.exists():
         os.remove(database_path)
     if sparse_path.exists():
         shutil.rmtree(sparse_path)
     sparse_path.mkdir(parents=True, exist_ok=True)
 
-    # 1) Feature Extraction: SIFT
-    # Dictionary with "SiftExtraction" sub-keys
-    # If your version doesn't support some keys, remove them (e.g. 'use_gpu', 'estimate_affine_shape', 'upright').
-    feature_extraction_options = {
-        "SiftExtraction": {
-            "use_gpu": USE_GPU,
-            "estimate_affine_shape": True,
-            "upright": False
-        }
-    }
+    # Decide on CPU or GPU
+    device = Device.cuda if use_gpu else Device.cpu
+
+    # 1) SIFT Extraction
+    #    We'll build a SiftExtractionOptions object and pass it as sift_options
+    #    If your build doesn't support 'estimate_affine_shape' or 'upright',
+    #    comment them out.
+    extraction_opts = SiftExtractionOptions()
+    extraction_opts.estimate_affine_shape = True
+    extraction_opts.upright = False
+    # Domain-size pooling or other fields if available:
+    # extraction_opts.domain_size_pooling = True
+
     print("Running feature extraction...")
     pycolmap.extract_features(
         database_path=str(database_path),
         image_path=str(images_path),
-        options=feature_extraction_options
+        camera_mode=CameraMode.AUTO,       # or CameraMode.SINGLE, etc.
+        sift_options=extraction_opts,      # pass the SiftExtractionOptions object
+        device=device
     )
 
-    # 2) Feature Matching: SIFT
-    # Another dictionary with "SiftMatching" sub-keys
-    # If your version doesn't support 'use_gpu', 'guided_matching', 'max_num_matches', etc., remove them.
-    feature_matching_options = {
-        "SiftMatching": {
-            "use_gpu": USE_GPU,
-            "cross_check": False,
-            "max_num_matches": 32768
-        }
-    }
+    # 2) SIFT Matching
+    #    We pass a SiftMatchingOptions object for match_features(..., sift_options=..., device=...).
+    matching_opts = SiftMatchingOptions()
+    matching_opts.cross_check = False
+    matching_opts.max_num_matches = 32768
+    # If your version supports domain_size_pooling or guided_matching, set them here.
+    # matching_opts.guided_matching = True
+
     print("Running feature matching...")
     pycolmap.match_features(
         database_path=str(database_path),
-        options=feature_matching_options
+        sift_options=matching_opts,
+        device=device
     )
 
-    # 3) Incremental Mapping
-    # The "Mapper" settings go under "Mapper" in a dict.
-    # If your version doesn't support 'multiple_models' or 'ignore_watermarks', remove them.
-    mapper_dict = {
-        "Mapper": {
-            "min_num_matches": 15,
-            "ignore_watermarks": True,
-            "multiple_models": True
-            # "ba_global_use_pba": USE_GPU, etc., if recognized
-        }
-    }
+    # 3) Incremental mapping
+    #    In older PyColmap, you typically pass SiftMatchingOptions again or rely on defaults.
+    #    There's no direct dictionary or 'MapperOptions' if your build doesn't have them.
     print("Running incremental mapping...")
     reconstructions = pycolmap.incremental_mapping(
         database_path=str(database_path),
         image_path=str(images_path),
         output_path=str(sparse_path),
-        options=mapper_dict
+        # Optionally pass the same matching_opts if your build supports it
+        # sift_options=matching_opts,
+        device=device
     )
 
     model_path = workspace_dir / "model.ply"
     if len(reconstructions) == 0:
         raise RuntimeError("No reconstruction could be created from the provided frames.")
 
-    # Get the largest reconstruction and export as PLY
+    # Export the largest reconstruction to PLY
     largest_model = max(reconstructions, key=lambda rc: len(rc.images))
     largest_model.export_PLY(str(model_path))
     print(f"Exported model to {model_path}")
+
     return model_path
 
 @app.route('/create_model')
 def create_model():
-    """Create a 3D model using pycolmap"""
+    """Create a 3D model using PyColmap."""
     frame_list = get_frame_data_from_mongo()
     
-    if not frame_list or len(frame_list) < 5:  # COLMAP works better with more frames
+    if not frame_list or len(frame_list) < 5:
         return jsonify({"error": "Need at least 5 frames to create a good 3D model"}), 400
     
     try:
@@ -530,10 +534,14 @@ def create_model():
         if len(frame_paths) < 5:
             return jsonify({"error": "Failed to load at least 5 valid frames"}), 400
         
-        # Run COLMAP
-        model_path = run_colmap_reconstruction(workspace_dir)
+        # Decide whether to use GPU or CPU
+        # (For example, always use GPU if available)
+        use_gpu = True  # or False if you want CPU only
         
-        # Create a visualization
+        # Run COLMAP reconstruction
+        model_path = run_colmap_reconstruction(workspace_dir, use_gpu=use_gpu)
+        
+        # Create a visualization from the resulting PLY
         fig = plt.figure(figsize=(12, 10))
         ax = fig.add_subplot(111, projection='3d')
         
@@ -550,18 +558,19 @@ def create_model():
         ax.set_title('COLMAP 3D Reconstruction')
         
         # Save the visualization
-        visualization_path = os.path.join(MODEL_FOLDER, f"colmap_model_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_viz.png")
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        visualization_path = os.path.join(MODEL_FOLDER, f"colmap_model_{timestamp}_viz.png")
         plt.savefig(visualization_path, dpi=200)
         plt.close()
         
         # Generate a unique name for the model
-        model_name = f"colmap_model_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.ply"
+        model_name = f"colmap_model_{timestamp}.ply"
         model_output_path = os.path.join(MODEL_FOLDER, model_name)
         
-        # Copy the model to the models folder
+        # Copy the model PLY to the models folder
         shutil.copy(model_path, model_output_path)
         
-        # Store model in MongoDB
+        # Read data for MongoDB
         with open(model_output_path, 'rb') as f:
             model_data = f.read()
         
@@ -570,6 +579,7 @@ def create_model():
         
         point_count = len(points)
         
+        # Insert model record in MongoDB
         models_collection.insert_one({
             "name": model_name,
             "data": model_data,
@@ -577,7 +587,7 @@ def create_model():
             "frame_count": len(frame_paths),
             "point_count": point_count,
             "created_at": datetime.datetime.now(),
-            "gpu_used": USE_GPU
+            "gpu_used": use_gpu  # Store the actual boolean
         })
         
         return render_template_string('''
@@ -611,7 +621,7 @@ def create_model():
                 <div class="info">
                     <h3>Model Details</h3>
                     <p><strong>Model name:</strong> {{ model_name }}</p>
-                    <p><strong>Points:</strong> {{ point_count | format_number }}</p>
+                    <p><strong>Points:</strong> {{ point_count }}</p>
                     <p><strong>Frames used:</strong> {{ frame_count }}</p>
                     <p><strong>Processing:</strong> 
                         <span class="gpu-badge {{ 'gpu-active' if gpu_used else 'gpu-inactive' }}">
@@ -631,8 +641,12 @@ def create_model():
             </div>
         </body>
         </html>
-        ''', model_name=model_name, point_count=point_count, frame_count=len(frame_paths), 
-            gpu_used=USE_GPU, created_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        ''', 
+        model_name=model_name,
+        point_count=point_count,
+        frame_count=len(frame_paths), 
+        gpu_used=use_gpu, 
+        created_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         
     except Exception as e:
         app.logger.error(f"Error creating 3D model: {str(e)}")
