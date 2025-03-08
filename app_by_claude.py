@@ -25,7 +25,7 @@ os.makedirs(COLMAP_WORKSPACE, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # Connect to MongoDB using environment variable
-MONGO_URI = "mongodb+srv://juanp:iGy1RQfwvSKuVlHh@cluster0.iiks7.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+MONGO_URI = "mongodb+srv://juanp:myUC0QU4AxAZAGp0@cluster0.iiks7.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 client = pymongo.MongoClient(MONGO_URI)
 db = client["video_frames"]
 frames_collection = db["frames"]
