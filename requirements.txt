@@ -1,5 +1,6 @@
 Flask==2.0.1
 opencv-python==4.5.3.56
-pymongo==4.0.1
+boto3==1.28.57  # AWS SDK for Python (New)
 numpy==1.21.2
 matplotlib==3.4.3
+Werkzeug==2.0.1
