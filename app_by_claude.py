@@ -284,14 +284,16 @@ def prepare_colmap_workspace():
 def run_colmap_reconstruction(workspace_dir):
     """Run COLMAP reconstruction pipeline"""
     # Configuration options (directly as keyword arguments)
+    device = pycolmap.Device.cuda if USE_GPU else pycolmap.Device.cpu
+    
     sift_options = pycolmap.SiftExtractionOptions(
-        gpu_index=0 if USE_GPU else -1,
+        device=device,
         estimate_affine_shape=True,
         upright=False
     )
     
     matcher_options = pycolmap.SiftMatchingOptions(
-        gpu_index=0 if USE_GPU else -1,
+        device=device,
         multiple_models=True,
         guided_matching=True
     )
