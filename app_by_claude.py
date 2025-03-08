@@ -11,6 +11,12 @@ from pathlib import Path
 from flask import Flask, request, render_template_string, jsonify, Response, send_file
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from pycolmap import (
+    SiftExtractionOptions,
+    SiftMatchingOptions,
+    MapperOptions,
+    Device
+)
 
 app = Flask(__name__)
 
@@ -411,77 +417,83 @@ def prepare_colmap_workspace():
     
     return workspace_dir, frame_paths
 
-def run_colmap_reconstruction(workspace_dir):
-    """Run COLMAP reconstruction pipeline"""
-    # Configuration options (directly as keyword arguments)
-    
-    sift_options = pycolmap.SiftExtractionOptions(
+def run_colmap_reconstruction(workspace_dir: Path, USE_GPU: bool):
+    """
+    Run a COLMAP reconstruction pipeline using PyColmap:
+    1) extract_features
+    2) match_features
+    3) incremental_mapping
+    and return the path to 'model.ply'.
+    """
+
+    database_path = workspace_dir / "database.db"
+    images_path   = workspace_dir / "images"
+    sparse_path   = workspace_dir / "sparse"
+
+    # Clean up old DB/sparse if needed
+    if database_path.exists():
+        os.remove(database_path)
+    if sparse_path.exists():
+        shutil.rmtree(sparse_path)
+    sparse_path.mkdir(parents=True, exist_ok=True)
+
+    # Decide on CPU or GPU device
+    device = Device.cuda if USE_GPU else Device.cpu
+
+    # Sift extraction options
+    sift_extraction_opts = SiftExtractionOptions(
         estimate_affine_shape=True,
         upright=False
+        # Other fields: max_image_size, domain_size_pooling, etc.
     )
-    
-    matcher_options = pycolmap.SiftMatchingOptions(
-        multiple_models=True,
-        guided_matching=True
+
+    # Sift matching options
+    sift_matching_opts = SiftMatchingOptions(
+        cross_check=False,
+        max_num_matches=32768
+        # Remove 'multiple_models' or 'guided_matching' if your version doesn't support them
     )
-    
-    mapper_options = pycolmap.MapperOptions(
+
+    # Mapper options
+    mapper_opts = MapperOptions(
         min_num_matches=15,
         ignore_watermarks=True,
         multiple_models=True
+        # ba_global_use_pba=True, ba_local_use_pba=True if you want GPU-based BA
     )
-    
-    database_path = workspace_dir / "database.db"
-    images_path = workspace_dir / "images"
-    sparse_path = workspace_dir / "sparse"
-    
-    # Make sure sparse directory exists
-    if not sparse_path.exists():
-        sparse_path.mkdir(parents=True)
-    
-    # Run the COLMAP pipeline
-    # 1. Feature extraction
+
     print("Running feature extraction...")
-    device = pycolmap.Device.cuda if USE_GPU else pycolmap.Device.cpu
-    
     pycolmap.extract_features(
-        database_path=str(database_path), 
+        database_path=str(database_path),
         image_path=str(images_path),
-        sift_options=sift_options,
+        sift_options=sift_extraction_opts,
         device=device
     )
-    
-    # 2. Feature matching
+
     print("Running feature matching...")
     pycolmap.match_features(
         database_path=str(database_path),
-        sift_options=sift_options,
-        matcher_options=matcher_options,
+        sift_options=sift_matching_opts,
         device=device
     )
-    
-    # 3. Reconstruction
-    print("Running reconstruction...")
-    reconstruction = pycolmap.incremental_mapping(
+
+    print("Running incremental mapping...")
+    reconstructions = pycolmap.incremental_mapping(
         database_path=str(database_path),
         image_path=str(images_path),
         output_path=str(sparse_path),
-        mapper_options=mapper_options
+        mapper_options=mapper_opts
     )
-    
-    # Export the reconstruction for visualization
+
     model_path = workspace_dir / "model.ply"
-    print(f"Exporting model to {model_path}")
-    
-    if len(reconstruction) > 0:
-        # Get the largest reconstruction
-        largest_model = max(reconstruction, key=lambda x: len(x.images))
-        
-        # Export to PLY
-        largest_model.export_PLY(str(model_path))
-        return model_path
-    else:
-        raise Exception("No reconstruction could be created from the provided frames")
+    if len(reconstructions) == 0:
+        raise RuntimeError("No reconstruction could be created from the provided frames.")
+
+    # Get the largest reconstruction
+    largest_model = max(reconstructions, key=lambda rc: len(rc.images))
+    largest_model.export_PLY(str(model_path))
+    print(f"Exported model to {model_path}")
+    return model_path
 
 @app.route('/create_model')
 def create_model():
