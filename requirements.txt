@@ -7,5 +7,3 @@ gunicorn
 pycolmap
 pymongo
 torch
-shutil-poetry
-pathlib
