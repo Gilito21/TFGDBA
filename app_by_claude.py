@@ -17,6 +17,7 @@ from pycolmap import (
     MapperOptions,
     Device
 )
+from base64 import b64encode
 
 app = Flask(__name__)
 
@@ -240,12 +241,15 @@ def get_frame_data_from_mongo():
     frames = list(frames_collection.find({}, {"filename": 1, "_id": 0}))
     return [frame["filename"] for frame in frames]
 
+from base64 import b64encode
+
 @app.route('/frames')
 def list_frames():
     """List all stored frames with option to create 3D model"""
     try:
-        frame_list = get_frame_data_from_mongo()
-        
+        # 1) Get filenames from Mongo
+        frame_list = get_frame_data_from_mongo()  # e.g. ['frame_0000.jpg', 'frame_0005.jpg', ...]
+
         if not frame_list:
             return render_template_string('''
             <!doctype html>
@@ -272,20 +276,29 @@ def list_frames():
             </body>
             </html>
             ''')
-        
-        # Get the total number of frames
+
         total_frames = len(frame_list)
-        
-        # Limit display to 20 frames
-        display_frames = frame_list
+
+        # 2) Pick up to 20 frames (for performance)
+        display_frames = []
         if total_frames > 20:
-            # Select evenly distributed frames
             step = total_frames // 20
-            display_frames = [frame_list[i] for i in range(0, total_frames, step)][:20]
-        
-        # Debug: Log frame data structure
-        app.logger.info(f"Frame data structure: {type(display_frames[0]) if display_frames else 'No frames'}")
-        
+            selected_filenames = [frame_list[i] for i in range(0, total_frames, step)][:20]
+        else:
+            selected_filenames = frame_list
+
+        # 3) For each chosen filename, fetch the image from MongoDB and Base64-encode it
+        for filename in selected_filenames:
+            doc = frames_collection.find_one({"filename": filename})
+            if doc and "data" in doc:
+                # Encode image data in Base64 so the browser can display it inline
+                b64_data = b64encode(doc["data"]).decode('utf-8')
+                display_frames.append({
+                    "filename": filename,
+                    "image_data": b64_data
+                })
+
+        # 4) Render them in the HTML
         return render_template_string('''
         <!doctype html>
         <html>
@@ -297,7 +310,7 @@ def list_frames():
                 h1 { color: #2d3748; }
                 p { color: #4a5568; margin-bottom: 25px; }
                 .frame-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
-                .frame-item { width: 100%; box-shadow: 0 2px 5px rgba(0,0,0,0.1); border-radius: 8px; overflow: hidden; background-color: white; }
+                .frame-item { width: 100%; box-shadow: 0 2px 5px rgba(0,0,0,0.1); border-radius: 8px; overflow: hidden; background-color: #ffffff; }
                 .frame-img { width: 100%; height: 150px; object-fit: cover; display: block; }
                 .frame-name { font-size: 12px; color: #718096; padding: 8px; text-align: center; background-color: #f8f9fa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
                 .button-container { margin-top: 30px; }
@@ -318,20 +331,16 @@ def list_frames():
                 <div class="frame-grid">
                     {% for frame in frames %}
                     <div class="frame-item">
-                        {% if 'image_data' in frame %}
-                        <img src="data:image/jpeg;base64,{{ frame.image_data }}" class="frame-img" alt="{{ frame.filename if 'filename' in frame else 'Frame' }}">
-                        {% elif 'path' in frame %}
-                        <img src="{{ frame.path }}" class="frame-img" alt="{{ frame.filename if 'filename' in frame else 'Frame' }}">
-                        {% else %}
-                        <img src="/frames/{{ frame.id if 'id' in frame else loop.index }}" class="frame-img" alt="Frame">
-                        {% endif %}
-                        <div class="frame-name">{{ frame.filename if 'filename' in frame else 'Frame ' + (frame.id if 'id' in frame else loop.index|string) }}</div>
+                        <!-- Inline base64-encoded image -->
+                        <img src="data:image/jpeg;base64,{{ frame.image_data }}" 
+                             class="frame-img" alt="{{ frame.filename }}">
+                        <div class="frame-name">{{ frame.filename }}</div>
                     </div>
                     {% endfor %}
                 </div>
                 
                 {% if total > 20 %}
-                <div class="more-indicator">Showing 20 of {{ total }} frames</div>
+                <div class="more-indicator">Showing {{ frames|length }} of {{ total }} frames</div>
                 {% endif %}
                 
                 <div class="button-container">
@@ -366,9 +375,11 @@ def list_frames():
         </body>
         </html>
         ''', frames=display_frames, total=total_frames)
+
     except Exception as e:
         app.logger.error(f"Error in list_frames route: {str(e)}")
         return f"Error loading frames: {str(e)}", 500
+
 
 # Add a new route to handle MongoDB frame deletion
 @app.route('/delete_mongo_frames', methods=['POST'])
