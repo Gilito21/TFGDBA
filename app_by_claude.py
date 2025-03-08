@@ -237,119 +237,132 @@ def get_frame_data_from_mongo():
 @app.route('/frames')
 def list_frames():
     """List all stored frames with option to create 3D model"""
-    frame_list = get_frame_data_from_mongo()
-    
-    if not frame_list:
+    try:
+        frame_list = get_frame_data_from_mongo()
+        
+        if not frame_list:
+            return render_template_string('''
+            <!doctype html>
+            <html>
+            <head>
+                <title>No Frames Available</title>
+                <style>
+                    body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+                    .container { max-width: 700px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+                    h1 { color: #2d3748; }
+                    .empty-icon { font-size: 60px; color: #a0aec0; margin: 20px 0; }
+                    p { color: #4a5568; margin-bottom: 25px; }
+                    button { display: inline-block; padding: 12px 20px; font-size: 16px; color: white; background: #4299e1; text-decoration: none; border-radius: 8px; margin: 8px; border: none; cursor: pointer; font-weight: 600; transition: all 0.3s ease; }
+                    button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="empty-icon">📁</div>
+                    <h1>No Frames Available</h1>
+                    <p>You need to upload and process a video first.</p>
+                    <a href="/"><button>Back to Upload</button></a>
+                </div>
+            </body>
+            </html>
+            ''')
+        
+        # Get the total number of frames
+        total_frames = len(frame_list)
+        
+        # Limit display to 20 frames
+        display_frames = frame_list
+        if total_frames > 20:
+            # Select evenly distributed frames
+            step = total_frames // 20
+            display_frames = [frame_list[i] for i in range(0, total_frames, step)][:20]
+        
+        # Debug: Log frame data structure
+        app.logger.info(f"Frame data structure: {type(display_frames[0]) if display_frames else 'No frames'}")
+        
         return render_template_string('''
         <!doctype html>
         <html>
         <head>
-            <title>No Frames Available</title>
+            <title>Extracted Frames</title>
             <style>
                 body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
-                .container { max-width: 700px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+                .container { max-width: 900px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
                 h1 { color: #2d3748; }
-                .empty-icon { font-size: 60px; color: #a0aec0; margin: 20px 0; }
                 p { color: #4a5568; margin-bottom: 25px; }
+                .frame-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+                .frame-item { width: 100%; box-shadow: 0 2px 5px rgba(0,0,0,0.1); border-radius: 8px; overflow: hidden; background-color: white; }
+                .frame-img { width: 100%; height: 150px; object-fit: cover; display: block; }
+                .frame-name { font-size: 12px; color: #718096; padding: 8px; text-align: center; background-color: #f8f9fa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .button-container { margin-top: 30px; }
                 button { display: inline-block; padding: 12px 20px; font-size: 16px; color: white; background: #4299e1; text-decoration: none; border-radius: 8px; margin: 8px; border: none; cursor: pointer; font-weight: 600; transition: all 0.3s ease; }
                 button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+                .create-model-btn { background: #48bb78; }
+                .create-model-btn:hover { background: #38a169; }
+                .delete-btn { background: #e53e3e; }
+                .delete-btn:hover { background: #c53030; }
+                .more-indicator { font-style: italic; color: #718096; margin: 20px 0; }
             </style>
         </head>
         <body>
             <div class="container">
-                <div class="empty-icon">📁</div>
-                <h1>No Frames Available</h1>
-                <p>You need to upload and process a video first.</p>
-                <a href="/"><button>Back to Upload</button></a>
+                <h1>Extracted Frames</h1>
+                <p>These frames were extracted from your uploaded video.</p>
+                
+                <div class="frame-grid">
+                    {% for frame in frames %}
+                    <div class="frame-item">
+                        {% if 'image_data' in frame %}
+                        <img src="data:image/jpeg;base64,{{ frame.image_data }}" class="frame-img" alt="{{ frame.filename if 'filename' in frame else 'Frame' }}">
+                        {% elif 'path' in frame %}
+                        <img src="{{ frame.path }}" class="frame-img" alt="{{ frame.filename if 'filename' in frame else 'Frame' }}">
+                        {% else %}
+                        <img src="/frames/{{ frame.id if 'id' in frame else loop.index }}" class="frame-img" alt="Frame">
+                        {% endif %}
+                        <div class="frame-name">{{ frame.filename if 'filename' in frame else 'Frame ' + (frame.id if 'id' in frame else loop.index|string) }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+                
+                {% if total > 20 %}
+                <div class="more-indicator">Showing 20 of {{ total }} frames</div>
+                {% endif %}
+                
+                <div class="button-container">
+                    <a href="/"><button>Back to Upload</button></a>
+                    <a href="/create_model"><button class="create-model-btn">Create 3D Model</button></a>
+                    <button class="delete-btn" onclick="deleteFrames()">Delete All Frames</button>
+                </div>
             </div>
+            
+            <script>
+            function deleteFrames() {
+                if (confirm('Are you sure you want to delete all frames from the database? This cannot be undone.')) {
+                    fetch('/delete_mongo_frames', {
+                        method: 'POST',
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert('All frames have been deleted from the database');
+                            window.location.href = '/';
+                        } else {
+                            alert('Error: ' + data.error);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('An error occurred while deleting frames');
+                    });
+                }
+            }
+            </script>
         </body>
         </html>
-        ''')
-    
-    # Get the total number of frames
-    total_frames = len(frame_list)
-    
-    # Limit display to 20 frames
-    display_frames = frame_list
-    if total_frames > 20:
-        # Select evenly distributed frames
-        step = total_frames // 20
-        display_frames = [frame_list[i] for i in range(0, total_frames, step)][:20]
-    
-    return render_template_string('''
-    <!doctype html>
-    <html>
-    <head>
-        <title>Extracted Frames</title>
-        <style>
-            body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
-            .container { max-width: 900px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
-            h1 { color: #2d3748; }
-            p { color: #4a5568; margin-bottom: 25px; }
-            .frame-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 30px; }
-            .frame-item { width: 180px; margin-bottom: 20px; }
-            .frame-img { width: 180px; height: 135px; object-fit: cover; border-radius: 8px; border: 1px solid #e2e8f0; }
-            .frame-name { font-size: 12px; color: #718096; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-            .button-container { margin-top: 30px; }
-            button { display: inline-block; padding: 12px 20px; font-size: 16px; color: white; background: #4299e1; text-decoration: none; border-radius: 8px; margin: 8px; border: none; cursor: pointer; font-weight: 600; transition: all 0.3s ease; }
-            button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-            .create-model-btn { background: #48bb78; }
-            .create-model-btn:hover { background: #38a169; }
-            .delete-btn { background: #e53e3e; }
-            .delete-btn:hover { background: #c53030; }
-            .more-indicator { font-style: italic; color: #718096; margin: 20px 0; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>Extracted Frames</h1>
-            <p>These frames were extracted from your uploaded video.</p>
-            
-            <div class="frame-grid">
-                {% for frame in frames %}
-                <div class="frame-item">
-                    <img src="data:image/jpeg;base64,{{ frame.image_data }}" class="frame-img" alt="{{ frame.filename }}">
-                    <div class="frame-name">{{ frame.filename }}</div>
-                </div>
-                {% endfor %}
-            </div>
-            
-            {% if total > 20 %}
-            <div class="more-indicator">Showing 20 of {{ total }} frames</div>
-            {% endif %}
-            
-            <div class="button-container">
-                <a href="/"><button>Back to Upload</button></a>
-                <a href="/create_model"><button class="create-model-btn">Create 3D Model</button></a>
-                <button class="delete-btn" onclick="deleteFrames()">Delete All Frames</button>
-            </div>
-        </div>
-        
-        <script>
-        function deleteFrames() {
-            if (confirm('Are you sure you want to delete all frames from the database? This cannot be undone.')) {
-                fetch('/delete_mongo_frames', {
-                    method: 'POST',
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        alert('All frames have been deleted from the database');
-                        window.location.href = '/';
-                    } else {
-                        alert('Error: ' + data.error);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('An error occurred while deleting frames');
-                });
-            }
-        }
-        </script>
-    </body>
-    </html>
-    ''', frames=display_frames, total=total_frames)
+        ''', frames=display_frames, total=total_frames)
+    except Exception as e:
+        app.logger.error(f"Error in list_frames route: {str(e)}")
+        return f"Error loading frames: {str(e)}", 500
 
 # Add a new route to handle MongoDB frame deletion
 @app.route('/delete_mongo_frames', methods=['POST'])
