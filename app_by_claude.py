@@ -283,32 +283,26 @@ def prepare_colmap_workspace():
 
 def run_colmap_reconstruction(workspace_dir):
     """Run COLMAP reconstruction pipeline"""
-    # Configuration options
-    feature_extractor_options = {
-        'SiftExtraction': {
-            'use_gpu': USE_GPU,
-            'estimate_affine_shape': True,
-            'upright': False
-        }
-    }
+    # Configuration options (directly as keyword arguments)
+    sift_options = pycolmap.SiftExtractionOptions(
+        use_gpu=USE_GPU,
+        estimate_affine_shape=True,
+        upright=False
+    )
     
-    feature_matcher_options = {
-        'SiftMatching': {
-            'use_gpu': USE_GPU,
-            'multiple_models': True,
-            'guided_matching': True
-        }
-    }
+    matcher_options = pycolmap.SiftMatchingOptions(
+        use_gpu=USE_GPU,
+        multiple_models=True,
+        guided_matching=True
+    )
     
-    mapper_options = {
-        'Mapper': {
-            'ba_global_use_pba': USE_GPU,
-            'ba_local_use_pba': USE_GPU,
-            'min_num_matches': 15,
-            'ignore_watermarks': True,
-            'multiple_models': True
-        }
-    }
+    mapper_options = pycolmap.MapperOptions(
+        ba_global_use_pba=USE_GPU,
+        ba_local_use_pba=USE_GPU,
+        min_num_matches=15,
+        ignore_watermarks=True,
+        multiple_models=True
+    )
     
     database_path = workspace_dir / "database.db"
     images_path = workspace_dir / "images"
@@ -321,21 +315,28 @@ def run_colmap_reconstruction(workspace_dir):
     # Run the COLMAP pipeline
     # 1. Feature extraction
     print("Running feature extraction...")
-    pycolmap.extract_features(database_path=database_path, 
-                              image_path=images_path,
-                              options=feature_extractor_options)
+    pycolmap.extract_features(
+        database_path=str(database_path), 
+        image_path=str(images_path),
+        sift_options=sift_options
+    )
     
     # 2. Feature matching
     print("Running feature matching...")
-    pycolmap.match_features(database_path=database_path,
-                           options=feature_matcher_options)
+    pycolmap.match_features(
+        database_path=str(database_path),
+        sift_options=sift_options,
+        matcher_options=matcher_options
+    )
     
     # 3. Reconstruction
     print("Running reconstruction...")
-    reconstruction = pycolmap.incremental_mapping(database_path=database_path,
-                                               image_path=images_path,
-                                               output_path=sparse_path,
-                                               options=mapper_options)
+    reconstruction = pycolmap.incremental_mapping(
+        database_path=str(database_path),
+        image_path=str(images_path),
+        output_path=str(sparse_path),
+        mapper_options=mapper_options
+    )
     
     # Export the reconstruction for visualization
     model_path = workspace_dir / "model.ply"
