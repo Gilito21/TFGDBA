@@ -579,3 +579,21 @@ def get_model(filename):
         return "Model not found", 404
 
     # Create a temporary file
+with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+    tmp_file.write(model_data["data"])
+    tmp_file_path = tmp_file.name
+    return send_file(tmp_file_path, as_attachment=True, download_name=filename)
+
+@app.route('/model_viz/<filename>')
+def get_model_viz(filename):
+    """Retrieve and display the visualization of a specific 3D model"""
+    model_viz_data = models_collection.find_one({"name": filename + ".ply"})
+ 
+    if not model_viz_data:
+        return "Model visualization not found", 404
+
+    visualization_data = model_viz_data["visualization"]
+    return Response(visualization_data, mimetype="image/png")
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
