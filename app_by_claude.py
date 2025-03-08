@@ -285,20 +285,18 @@ def run_colmap_reconstruction(workspace_dir):
     """Run COLMAP reconstruction pipeline"""
     # Configuration options (directly as keyword arguments)
     sift_options = pycolmap.SiftExtractionOptions(
-        use_gpu=USE_GPU,
+        gpu_index=0 if USE_GPU else -1,
         estimate_affine_shape=True,
         upright=False
     )
     
     matcher_options = pycolmap.SiftMatchingOptions(
-        use_gpu=USE_GPU,
+        gpu_index=0 if USE_GPU else -1,
         multiple_models=True,
         guided_matching=True
     )
     
     mapper_options = pycolmap.MapperOptions(
-        ba_global_use_pba=USE_GPU,
-        ba_local_use_pba=USE_GPU,
         min_num_matches=15,
         ignore_watermarks=True,
         multiple_models=True
