@@ -587,7 +587,7 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
             colmap_exe, "model_converter",
             "--input_path", str(model_folder),
             "--output_path", str(model_path),
-            "--output_type", "PLY"
+            "--output_type", "OBJ"
         ]
         subprocess.run(cmd, check=True)
         
