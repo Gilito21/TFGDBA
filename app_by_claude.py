@@ -37,6 +37,16 @@ db = client["video_frames"]
 frames_collection = db["frames"]
 models_collection = db["models"]
 
+model_creation_progress = {
+    "current_step": 0,
+    "total_steps": 4,  # Feature extraction, matching, mapping, export
+    "step_name": "Initializing",
+    "percent_complete": 0,
+    "is_complete": False,
+    "error": None,
+    "model_path": None
+}
+
 # Check for GPU availability
 USE_GPU = torch.cuda.is_available()
 if USE_GPU:
@@ -123,6 +133,14 @@ def upload_form():
     </body>
     </html>
     ''', gpu_available=USE_GPU)
+
+@app.route('/model_progress')
+def get_model_progress():
+    """Return the current progress of model creation as JSON"""
+    global model_creation_progress
+    return jsonify(model_creation_progress)
+
+
 
 @app.route('/process_video', methods=['POST'])
 def process_video():
@@ -415,66 +433,263 @@ import os
 from pathlib import Path
 import shutil
 
-def run_colmap_reconstruction(workspace_dir: Path):
-    """Run COLMAP reconstruction using the custom CUDA-enabled build."""
-    database_path = workspace_dir / "database.db"
-    images_path = workspace_dir / "images"
-    sparse_path = workspace_dir / "sparse"
+def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
+    """Run COLMAP reconstruction using the custom CUDA-enabled build and update progress."""
+    global model_creation_progress
     
-    # Clean up old files
-    if database_path.exists():
-        os.remove(database_path)
-    if sparse_path.exists():
-        shutil.rmtree(sparse_path)
-    sparse_path.mkdir(parents=True, exist_ok=True)
-    
-    # Path to your custom COLMAP build
-    colmap_exe = "/home/ubuntu/TFGDBA/colmap/build/src/colmap/exe/colmap"
-    
-    # 1. Feature extraction (with GPU)
-    print("Running feature extraction...")
-    cmd = [
-        colmap_exe, "feature_extractor",
-        "--database_path", str(database_path),
-        "--image_path", str(images_path),
-        "--SiftExtraction.use_gpu", "1",
-        "--SiftExtraction.gpu_index", "0"
-    ]
-    subprocess.run(cmd, check=True)
-    
-    # 2. Exhaustive matching (with GPU)
-    print("Running exhaustive feature matching...")
-    cmd = [
-        colmap_exe, "exhaustive_matcher",
-        "--database_path", str(database_path),
-        "--SiftMatching.use_gpu", "1",
-        "--SiftMatching.gpu_index", "0"
-    ]
-    subprocess.run(cmd, check=True)
-    
-    # 3. Mapper
-    print("Running incremental mapping...")
-    cmd = [
-        colmap_exe, "mapper",
-        "--database_path", str(database_path),
-        "--image_path", str(images_path),
-        "--output_path", str(sparse_path)
-    ]
-    subprocess.run(cmd, check=True)
-    
-    # Export to PLY
-    model_path = workspace_dir / "model.ply"
-    model_folder = list(sparse_path.glob("*"))[0]  # Get the first reconstruction
-    cmd = [
-        colmap_exe, "model_converter",
-        "--input_path", str(model_folder),
-        "--output_path", str(model_path),
-        "--output_type", "PLY"
-    ]
-    subprocess.run(cmd, check=True)
-    
-    print(f"Exported model to {model_path}")
-    return model_path
+    try:
+        database_path = workspace_dir / "database.db"
+        images_path = workspace_dir / "images"
+        sparse_path = workspace_dir / "sparse"
+        
+        # Clean up old files
+        if database_path.exists():
+            os.remove(database_path)
+        if sparse_path.exists():
+            shutil.rmtree(sparse_path)
+        sparse_path.mkdir(parents=True, exist_ok=True)
+        
+        # Path to your custom COLMAP build
+        colmap_exe = "/home/ubuntu/TFGDBA/colmap/build/src/colmap/exe/colmap"
+        
+        # Initialize progress
+        model_creation_progress["current_step"] = 1
+        model_creation_progress["step_name"] = "Feature Extraction"
+        model_creation_progress["percent_complete"] = 25
+        model_creation_progress["is_complete"] = False
+        
+        # 1. Feature extraction (with GPU)
+        print("Running feature extraction...")
+        cmd = [
+            colmap_exe, "feature_extractor",
+            "--database_path", str(database_path),
+            "--image_path", str(images_path),
+            "--SiftExtraction.use_gpu", "1",
+            "--SiftExtraction.gpu_index", "0"
+        ]
+        subprocess.run(cmd, check=True)
+        
+        # Update progress
+        model_creation_progress["current_step"] = 2
+        model_creation_progress["step_name"] = "Feature Matching"
+        model_creation_progress["percent_complete"] = 50
+        
+        # 2. Exhaustive matching (with GPU)
+        print("Running exhaustive feature matching...")
+        cmd = [
+            colmap_exe, "exhaustive_matcher",
+            "--database_path", str(database_path),
+            "--SiftMatching.use_gpu", "1",
+            "--SiftMatching.gpu_index", "0"
+        ]
+        subprocess.run(cmd, check=True)
+        
+        # Update progress
+        model_creation_progress["current_step"] = 3
+        model_creation_progress["step_name"] = "3D Reconstruction"
+        model_creation_progress["percent_complete"] = 75
+        
+        # 3. Mapper
+        print("Running incremental mapping...")
+        cmd = [
+            colmap_exe, "mapper",
+            "--database_path", str(database_path),
+            "--image_path", str(images_path),
+            "--output_path", str(sparse_path)
+        ]
+        subprocess.run(cmd, check=True)
+        
+        # Update progress
+        model_creation_progress["current_step"] = 4
+        model_creation_progress["step_name"] = "Exporting Model"
+        model_creation_progress["percent_complete"] = 90
+        
+        # Export to PLY
+        model_path = workspace_dir / "model.ply"
+        model_folder = list(sparse_path.glob("*"))[0]  # Get the first reconstruction
+        cmd = [
+            colmap_exe, "model_converter",
+            "--input_path", str(model_folder),
+            "--output_path", str(model_path),
+            "--output_type", "PLY"
+        ]
+        subprocess.run(cmd, check=True)
+        
+        # Save model to persistent storage
+        timestamp = datetime.datetime.now().isoformat()
+        model_file_name = f"model_{timestamp.replace(':', '-')}.ply"
+        persistent_model_path = Path(MODEL_FOLDER) / model_file_name
+        shutil.copy(model_path, persistent_model_path)
+        
+        # Save model metadata to MongoDB
+        model_document = {
+            "filename": model_file_name,
+            "path": str(persistent_model_path),
+            "created_at": timestamp,
+            "video_id": video_id,
+            "status": "completed",
+            "reconstruction_data": {
+                "num_images": len(list(images_path.glob("*.*"))),
+                "workspace_path": str(workspace_dir)
+            }
+        }
+        
+        # Insert into MongoDB
+        model_id = models_collection.insert_one(model_document).inserted_id
+        
+        # Update progress with model information
+        model_creation_progress["percent_complete"] = 100
+        model_creation_progress["is_complete"] = True
+        model_creation_progress["model_path"] = str(persistent_model_path)
+        model_creation_progress["model_id"] = str(model_id)
+        
+        print(f"Exported model to {persistent_model_path} and saved to database with ID: {model_id}")
+        return persistent_model_path, model_id
+        
+    except Exception as e:
+        # Update progress with error
+        model_creation_progress["error"] = str(e)
+        print(f"Error in reconstruction: {str(e)}")
+        raise e
+
+@app.route('/create_model_progress')
+def create_model_progress():
+    """Show a page with progress bar for model creation"""
+    return render_template_string('''
+    <!doctype html>
+    <html>
+    <head>
+        <title>Creating 3D Model</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+            .container { max-width: 700px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+            h1 { color: #2d3748; margin-bottom: 20px; }
+            .progress-container { margin: 40px 0; }
+            .progress-bar {
+                width: 100%;
+                background-color: #e2e8f0;
+                border-radius: 10px;
+                height: 20px;
+                position: relative;
+                margin-bottom: 10px;
+            }
+            .progress-fill {
+                height: 100%;
+                background-color: #4299e1;
+                border-radius: 10px;
+                transition: width 0.5s;
+                width: 0%;
+                position: absolute;
+                left: 0;
+            }
+            .step-name {
+                font-size: 16px;
+                color: #4a5568;
+                margin: 15px 0;
+                font-weight: 600;
+            }
+            .percent {
+                font-size: 14px;
+                color: #718096;
+            }
+            .loading-spinner {
+                border: 5px solid #f3f3f3;
+                border-top: 5px solid #3498db;
+                border-radius: 50%;
+                width: 50px;
+                height: 50px;
+                animation: spin 2s linear infinite;
+                margin: 20px auto;
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            .error {
+                color: #e53e3e;
+                background-color: #fed7d7;
+                padding: 15px;
+                border-radius: 8px;
+                margin-top: 20px;
+                text-align: left;
+            }
+            .hidden { display: none; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Creating 3D Model</h1>
+            <p>Please wait while we process your frames and create a 3D model with COLMAP.</p>
+            
+            <div class="loading-spinner" id="spinner"></div>
+            
+            <div class="progress-container">
+                <div class="step-name" id="stepName">Initializing...</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="percent" id="percentText">0%</div>
+            </div>
+            
+            <div id="errorContainer" class="error hidden">
+                <strong>Error:</strong> <span id="errorText"></span>
+            </div>
+        </div>
+        
+        <script>
+            // Poll for progress updates every 1 second
+            const progressFill = document.getElementById('progressFill');
+            const percentText = document.getElementById('percentText');
+            const stepName = document.getElementById('stepName');
+            const spinner = document.getElementById('spinner');
+            const errorContainer = document.getElementById('errorContainer');
+            const errorText = document.getElementById('errorText');
+            
+            let isComplete = false;
+            
+            function updateProgress() {
+                if (isComplete) return;
+                
+                fetch('/model_progress')
+                    .then(response => response.json())
+                    .then(data => {
+                        // Update the progress bar
+                        progressFill.style.width = `${data.percent_complete}%`;
+                        percentText.textContent = `${data.percent_complete}%`;
+                        stepName.textContent = data.step_name;
+                        
+                        // Check for completion or error
+                        if (data.error) {
+                            isComplete = true;
+                            spinner.classList.add('hidden');
+                            errorContainer.classList.remove('hidden');
+                            errorText.textContent = data.error;
+                        } else if (data.is_complete) {
+                            isComplete = true;
+                            spinner.classList.add('hidden');
+                            // Redirect to the model view page
+                            setTimeout(() => {
+                                window.location.href = '/models';
+                            }, 1000);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching progress:', error);
+                    });
+            }
+            
+            // Update progress immediately and then every second
+            updateProgress();
+            const intervalId = setInterval(updateProgress, 1000);
+            
+            // Clean up interval on page unload
+            window.addEventListener('beforeunload', function() {
+                clearInterval(intervalId);
+            });
+        </script>
+    </body>
+    </html>
+    ''')
 
 def prepare_colmap_workspace():
     """Prepare the COLMAP workspace by copying frames from MongoDB."""
@@ -503,136 +718,100 @@ def prepare_colmap_workspace():
 
 @app.route('/create_model')
 def create_model():
-    """Create a 3D model using PyColmap."""
+    """Start the 3D model creation process in a background thread and redirect to progress page"""
+    global model_creation_progress
+    
     frame_list = get_frame_data_from_mongo()
     
     if not frame_list or len(frame_list) < 5:
         return jsonify({"error": "Need at least 5 frames to create a good 3D model"}), 400
     
-    try:
-        # Prepare the workspace
-        workspace_dir, frame_paths = prepare_colmap_workspace()
-        
-        if len(frame_paths) < 5:
-            return jsonify({"error": "Failed to load at least 5 valid frames"}), 400
-        
-        # Decide whether to use GPU or CPU
-        # (For example, always use GPU if available)
-        
-        
-        # Run COLMAP reconstruction
-        model_path = run_colmap_reconstruction(workspace_dir)
-        
-        # Create a visualization from the resulting PLY
-        fig = plt.figure(figsize=(12, 10))
-        ax = fig.add_subplot(111, projection='3d')
-        
-        # Load and visualize the point cloud
-        point_cloud = np.loadtxt(model_path, skiprows=15, usecols=(0, 1, 2, 3, 4, 5))
-        points = point_cloud[:, :3]
-        colors = point_cloud[:, 3:] / 255.0  # Normalize RGB values
-        
-        # Plot points with their colors
-        ax.scatter(points[:, 0], points[:, 1], points[:, 2], s=1, c=colors)
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
-        ax.set_title('COLMAP 3D Reconstruction')
-        
-        # Save the visualization
-        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        visualization_path = os.path.join(MODEL_FOLDER, f"colmap_model_{timestamp}_viz.png")
-        plt.savefig(visualization_path, dpi=200)
-        plt.close()
-        
-        # Generate a unique name for the model
-        model_name = f"colmap_model_{timestamp}.ply"
-        model_output_path = os.path.join(MODEL_FOLDER, model_name)
-        
-        # Copy the model PLY to the models folder
-        shutil.copy(model_path, model_output_path)
-        
-        # Read data for MongoDB
-        with open(model_output_path, 'rb') as f:
-            model_data = f.read()
-        
-        with open(visualization_path, 'rb') as f:
-            viz_data = f.read()
-        
-        point_count = len(points)
-        
-        # Insert model record in MongoDB
-        models_collection.insert_one({
-            "name": model_name,
-            "data": model_data,
-            "visualization": viz_data,
-            "frame_count": len(frame_paths),
-            "point_count": point_count,
-            "created_at": datetime.datetime.now(),
-            "gpu_used": use_gpu  # Store the actual boolean
-        })
-        
-        return render_template_string('''
-        <!doctype html>
-        <html>
-        <head>
-            <title>3D Model Created</title>
-            <style>
-                body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
-                .container { max-width: 800px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
-                h1 { color: #2d3748; }
-                .success-icon { font-size: 60px; color: #48bb78; margin: 15px 0; }
-                img { max-width: 700px; max-height: 500px; margin: 20px auto; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-                button { display: inline-block; padding: 12px 20px; font-size: 16px; color: white; background: #4299e1; text-decoration: none; border-radius: 8px; margin: 8px; border: none; cursor: pointer; font-weight: 600; transition: all 0.3s ease; }
-                button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-                .download-btn { background: #48bb78; }
-                .download-btn:hover { background: #38a169; }
-                .info { text-align: left; margin: 20px auto; max-width: 600px; background: #edf2f7; padding: 20px; border-radius: 8px; }
-                .info p { margin: 8px 0; color: #4a5568; }
-                .info h3 { margin-top: 0; color: #2d3748; }
-                .gpu-badge { display: inline-block; padding: 6px 12px; border-radius: 15px; font-size: 14px; font-weight: 600; }
-                .gpu-active { background-color: #c6f6d5; color: #276749; }
-                .gpu-inactive { background-color: #fed7d7; color: #9b2c2c; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="success-icon">✓</div>
-                <h1>3D Model Created Successfully</h1>
-                
-                <div class="info">
-                    <h3>Model Details</h3>
-                    <p><strong>Model name:</strong> {{ model_name }}</p>
-                    <p><strong>Points:</strong> {{ point_count }}</p>
-                    <p><strong>Frames used:</strong> {{ frame_count }}</p>
-                    <p><strong>Processing:</strong> 
-                        <span class="gpu-badge {{ 'gpu-active' if gpu_used else 'gpu-inactive' }}">
-                            {{ 'GPU Accelerated' if gpu_used else 'CPU Only' }}
-                        </span>
-                    </p>
-                    <p><strong>Created:</strong> {{ created_at }}</p>
-                </div>
-                
-                <img src="/model_viz/{{ model_name.split('.')[0] }}" alt="3D Model Visualization">
-                
-                <div>
-                    <a href="/model/{{ model_name }}" download><button class="download-btn">Download PLY File</button></a>
-                    <a href="/models"><button>View All Models</button></a>
-                    <a href="/"><button>Back to Home</button></a>
-                </div>
-            </div>
-        </body>
-        </html>
-        ''', 
-        model_name=model_name,
-        point_count=point_count,
-        frame_count=len(frame_paths), 
-        gpu_used=use_gpu, 
-        created_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-        
-    except Exception as e:
-        app.logger.error(f"Error creating 3D model: {str(e)}")
-        return jsonify({"error": f"Failed to create 3D model: {str(e)}"}), 500
+    # Reset the progress tracker
+    model_creation_progress = {
+        "current_step": 0,
+        "total_steps": 4,
+        "step_name": "Initializing",
+        "percent_complete": 0,
+        "is_complete": False,
+        "error": None,
+        "model_path": None
+    }
+    
+    # Start the model creation process in a background thread
+    import threading
+    
+    def create_model_thread():
+        try:
+            # Prepare the workspace
+            workspace_dir, frame_paths = prepare_colmap_workspace()
+            
+            if len(frame_paths) < 5:
+                model_creation_progress["error"] = "Failed to load at least 5 valid frames"
+                return
+            
+            # Run COLMAP reconstruction
+            model_path = run_colmap_reconstruction(workspace_dir)
+            
+            # Create a visualization from the resulting PLY
+            fig = plt.figure(figsize=(12, 10))
+            ax = fig.add_subplot(111, projection='3d')
+            
+            # Load and visualize the point cloud
+            point_cloud = np.loadtxt(model_path, skiprows=15, usecols=(0, 1, 2, 3, 4, 5))
+            points = point_cloud[:, :3]
+            colors = point_cloud[:, 3:] / 255.0  # Normalize RGB values
+            
+            # Plot points with their colors
+            ax.scatter(points[:, 0], points[:, 1], points[:, 2], s=1, c=colors)
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
+            ax.set_title('COLMAP 3D Reconstruction')
+            
+            # Save the visualization
+            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            visualization_path = os.path.join(MODEL_FOLDER, f"colmap_model_{timestamp}_viz.png")
+            plt.savefig(visualization_path, dpi=200)
+            plt.close()
+            
+            # Generate a unique name for the model
+            model_name = f"colmap_model_{timestamp}.ply"
+            model_output_path = os.path.join(MODEL_FOLDER, model_name)
+            
+            # Copy the model PLY to the models folder
+            shutil.copy(model_path, model_output_path)
+            
+            # Read data for MongoDB
+            with open(model_output_path, 'rb') as f:
+                model_data = f.read()
+            
+            with open(visualization_path, 'rb') as f:
+                viz_data = f.read()
+            
+            point_count = len(points)
+            
+            # Insert model record in MongoDB
+            models_collection.insert_one({
+                "name": model_name,
+                "data": model_data,
+                "visualization": viz_data,
+                "frame_count": len(frame_paths),
+                "point_count": point_count,
+                "created_at": datetime.datetime.now(),
+                "gpu_used": USE_GPU  # Fixed variable name
+            })
+            
+        except Exception as e:
+            app.logger.error(f"Error creating 3D model: {str(e)}")
+            model_creation_progress["error"] = str(e)
+    
+    # Start the background thread
+    thread = threading.Thread(target=create_model_thread)
+    thread.daemon = True
+    thread.start()
+    
+    # Redirect to the progress page
+    return redirect('/create_model_progress')
 
 @app.route('/models')
 def list_models():
