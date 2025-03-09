@@ -587,7 +587,7 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
             "--output_type", "PLY"
         ]
         subprocess.run(cmd, check=True)
-        
+        #try
         # Validate PLY file content
         with open(ply_model_path, 'rb') as ply_file:
             header = ply_file.read(100).decode('ascii', errors='ignore')
