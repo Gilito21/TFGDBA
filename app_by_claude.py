@@ -64,7 +64,7 @@ def extract_frames(video_path, output_folder, frame_interval=5):
         'ffmpeg',
         '-i', video_path,
         '-vf', f'select=\'not(mod(n,{frame_interval}))\'',
-        '-vsync', 'vfr',  # Variable frame rate
+        '-vsync', '0',  # Variable frame rate
         '-q:v', '2',  # Quality level (lower is better)
         f'{output_folder}/frame_%04d.jpg'
     ]
@@ -515,7 +515,6 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
             "--Mapper.ba_refine_focal_length", "1",     # Allow focal length refinement
             "--Mapper.ba_refine_principal_point", "0",  # Fix principal point for stability
             "--Mapper.ba_refine_extra_params", "0",     # Don't refine extra params
-            "--Mapper.ba_global_use_pba", "0",          # Don't use PBA which can be unstable
             "--Mapper.filter_max_reproj_error", "4.0",  # Stricter reprojection error
             "--Mapper.ba_global_max_refinements", "5",  # More refinements for better results
             "--Mapper.min_num_matches", "15",           # Require more matches
@@ -733,7 +732,7 @@ def create_model_progress():
             
             // Update progress immediately and then every second
             updateProgress();
-            const intervalId = setInterval(updateProgress, 1000);
+            const intervalId = setInterval(updateProgress, 3000);
             
             // Clean up interval on page unload
             window.addEventListener('beforeunload', function() {
