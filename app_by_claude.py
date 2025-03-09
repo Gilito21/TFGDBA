@@ -410,103 +410,70 @@ def delete_mongo_frames():
         app.logger.error(f"Error deleting frames from MongoDB: {str(e)}")
         return jsonify({"success": False, "error": str(e)})
 
-def prepare_colmap_workspace():
-    """Prepare the COLMAP workspace by copying frames from MongoDB."""
-    workspace_dir = Path(COLMAP_WORKSPACE)
-    images_dir = workspace_dir / "images"
-    
-    # Clean existing files
-    if images_dir.exists():
-        shutil.rmtree(images_dir)
-    
-    images_dir.mkdir(exist_ok=True, parents=True)
-    
-    # Retrieve frames from MongoDB and save them to the workspace
-    frame_list = get_frame_data_from_mongo()
-    frame_paths = []
-    
-    for frame_name in frame_list:
-        frame_data = frames_collection.find_one({"filename": frame_name})
-        if frame_data:
-            frame_path = images_dir / frame_name
-            with open(frame_path, "wb") as f:
-                f.write(frame_data["data"])
-            frame_paths.append(str(frame_path))
-    
-    return workspace_dir, frame_paths
+import subprocess
+import os
+from pathlib import Path
+import shutil
 
 def run_colmap_reconstruction(workspace_dir: Path):
-    """
-    Run a COLMAP reconstruction pipeline with PyColmap 3.11.1:
-      1) extract_features(...)
-      2) match_exhaustive(...)
-      3) incremental_mapping(...)
-    Returns the path to 'model.ply'.
-    """
+    """Run COLMAP reconstruction using the custom CUDA-enabled build."""
     database_path = workspace_dir / "database.db"
-    images_path   = workspace_dir / "images"
-    sparse_path   = workspace_dir / "sparse"
+    images_path = workspace_dir / "images"
+    sparse_path = workspace_dir / "sparse"
     
-    # Clean up old DB / sparse data
+    # Clean up old files
     if database_path.exists():
         os.remove(database_path)
     if sparse_path.exists():
         shutil.rmtree(sparse_path)
     sparse_path.mkdir(parents=True, exist_ok=True)
     
-    # Force GPU usage
-    device = Device.cuda  # Change from auto to cuda to force GPU usage
+    # Path to your custom COLMAP build
+    colmap_exe = "/home/ubuntu/TFGDBA/colmap/build/src/colmap/exe/colmap"
     
-    # 1) FEATURE EXTRACTION
-    sift_extraction_opts = SiftExtractionOptions()
-    sift_extraction_opts.estimate_affine_shape = True
-    sift_extraction_opts.upright = False
-    sift_extraction_opts.use_gpu = True  # Force GPU usage
-    sift_extraction_opts.gpu_index = 0   # Use first GPU
-    
+    # 1. Feature extraction (with GPU)
     print("Running feature extraction...")
-    pycolmap.extract_features(
-        database_path=str(database_path),
-        image_path=str(images_path),
-        camera_mode=CameraMode.AUTO,
-        sift_options=sift_extraction_opts,
-        device=device
-    )
+    cmd = [
+        colmap_exe, "feature_extractor",
+        "--database_path", str(database_path),
+        "--image_path", str(images_path),
+        "--SiftExtraction.use_gpu", "1",
+        "--SiftExtraction.gpu_index", "0"
+    ]
+    subprocess.run(cmd, check=True)
     
-    # 2) EXHAUSTIVE MATCHING
+    # 2. Exhaustive matching (with GPU)
     print("Running exhaustive feature matching...")
-    # For pycolmap 3.11.1, we need to use the lower-level API to configure GPU
-    sift_matching_opts = pycolmap.SiftMatchingOptions()
-    sift_matching_opts.use_gpu = True
-    sift_matching_opts.gpu_index = 0
+    cmd = [
+        colmap_exe, "exhaustive_matcher",
+        "--database_path", str(database_path),
+        "--SiftMatching.use_gpu", "1",
+        "--SiftMatching.gpu_index", "0"
+    ]
+    subprocess.run(cmd, check=True)
     
-    # Use the lower-level API to specify GPU for matching
-    matcher = pycolmap.create_exhaustive_matcher(sift_matching_opts)
-    matcher.match(database_path=str(database_path))
-    
-    # 3) INCREMENTAL MAPPING
+    # 3. Mapper
     print("Running incremental mapping...")
-    mapper_options = pycolmap.IncrementalMapperOptions()
-    mapper_options.sift_options.use_gpu = True
-    mapper_options.sift_options.gpu_index = 0
+    cmd = [
+        colmap_exe, "mapper",
+        "--database_path", str(database_path),
+        "--image_path", str(images_path),
+        "--output_path", str(sparse_path)
+    ]
+    subprocess.run(cmd, check=True)
     
-    reconstructions = pycolmap.incremental_mapping(
-        database_path=str(database_path),
-        image_path=str(images_path),
-        output_path=str(sparse_path),
-        options=mapper_options,
-        device=device
-    )
-    
+    # Export to PLY
     model_path = workspace_dir / "model.ply"
-    if len(reconstructions) == 0:
-        raise RuntimeError("No reconstruction could be created from the provided frames.")
+    model_folder = list(sparse_path.glob("*"))[0]  # Get the first reconstruction
+    cmd = [
+        colmap_exe, "model_converter",
+        "--input_path", str(model_folder),
+        "--output_path", str(model_path),
+        "--output_type", "PLY"
+    ]
+    subprocess.run(cmd, check=True)
     
-    # Pick the largest reconstruction and export to PLY
-    largest_model = max(reconstructions, key=lambda rc: len(rc.images))
-    largest_model.export_PLY(str(model_path))
     print(f"Exported model to {model_path}")
-    
     return model_path
 
 @app.route('/create_model')
