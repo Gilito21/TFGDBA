@@ -476,6 +476,31 @@ def run_colmap_reconstruction(workspace_dir: Path):
     print(f"Exported model to {model_path}")
     return model_path
 
+def prepare_colmap_workspace():
+    """Prepare the COLMAP workspace by copying frames from MongoDB."""
+    workspace_dir = Path(COLMAP_WORKSPACE)
+    images_dir = workspace_dir / "images"
+    
+    # Clean existing files
+    if images_dir.exists():
+        shutil.rmtree(images_dir)
+    
+    images_dir.mkdir(exist_ok=True, parents=True)
+    
+    # Retrieve frames from MongoDB and save them to the workspace
+    frame_list = get_frame_data_from_mongo()
+    frame_paths = []
+    
+    for frame_name in frame_list:
+        frame_data = frames_collection.find_one({"filename": frame_name})
+        if frame_data:
+            frame_path = images_dir / frame_name
+            with open(frame_path, "wb") as f:
+                f.write(frame_data["data"])
+            frame_paths.append(str(frame_path))
+    
+    return workspace_dir, frame_paths
+
 @app.route('/create_model')
 def create_model():
     """Create a 3D model using PyColmap."""
