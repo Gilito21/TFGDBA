@@ -63,23 +63,23 @@ import subprocess  # Only needed if you use other subprocess calls
 def extract_frames(video_path, output_folder, frame_interval=5):
     """
     Extract frames from a video using OpenCV.
-    
+
     Parameters:
       video_path (str): Path to the video file.
       output_folder (str): Directory where extracted frames will be saved.
       frame_interval (int): Save every Nth frame.
-    
+
     Returns:
       int: Number of frames extracted.
     """
     # Create the output directory if it doesn't exist.
     os.makedirs(output_folder, exist_ok=True)
-    
+
     # Open the video file using OpenCV.
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Failed to open video: {video_path}")
-    
+
     frame_count = 0
     extracted_count = 0
 
@@ -87,9 +87,9 @@ def extract_frames(video_path, output_folder, frame_interval=5):
         ret, frame = cap.read()
         if not ret:
             break  # End of video
-        
+
         frame_count += 1
-        
+
         # Save every 'frame_interval'-th frame.
         if frame_count % frame_interval == 0:
             frame_filename = f"frame_{extracted_count:04d}.jpg"
@@ -98,23 +98,18 @@ def extract_frames(video_path, output_folder, frame_interval=5):
             print(f"Saving frame {frame_count} as {frame_filename}")
             extracted_count += 1
 
+            # Save the frame to MongoDB
+            with open(output_path, "rb") as f:
+                frame_data = f.read()
+                frames_collection.insert_one({
+                    "filename": frame_filename,
+                    "data": frame_data
+                })
+
     cap.release()
-    
-    frames = sorted(Path(output_folder).glob('frame_*.jpg'))
-    for frame_path in frames:
-        with open(frame_path, "rb") as f:
-            frame_data = f.read()
-            frames_collection.insert_one({
-                "filename": frame_path.name,
-                "data": frame_data
-            })
-            
-    print(f"Extracted {len(frames)} frames out of {frame_count} total frames using OpenCV.")
-    
-    # Save frames to MongoDB
-    
-    
-    print(f"Inserted {len(frames)} frames into MongoDB.")
+
+    print(f"Extracted {extracted_count} frames out of {frame_count} total frames using OpenCV.")
+    print(f"Inserted {extracted_count} frames into MongoDB.")
     return extracted_count
 
 @app.route('/')
