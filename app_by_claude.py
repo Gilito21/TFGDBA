@@ -13,7 +13,7 @@ from pycolmap import (
 import torch
 import shutil
 from pathlib import Path
-from flask import Flask, request, render_template_string, jsonify, Response, send_file
+from flask import Flask, request, render_template_string, jsonify, Response, send_file, redirect
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from base64 import b64encode
