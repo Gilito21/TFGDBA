@@ -438,71 +438,75 @@ def prepare_colmap_workspace():
 def run_colmap_reconstruction(workspace_dir: Path):
     """
     Run a COLMAP reconstruction pipeline with PyColmap 3.11.1:
-
       1) extract_features(...)
       2) match_exhaustive(...)
       3) incremental_mapping(...)
-
     Returns the path to 'model.ply'.
     """
-
     database_path = workspace_dir / "database.db"
     images_path   = workspace_dir / "images"
     sparse_path   = workspace_dir / "sparse"
-
+    
     # Clean up old DB / sparse data
     if database_path.exists():
         os.remove(database_path)
     if sparse_path.exists():
         shutil.rmtree(sparse_path)
     sparse_path.mkdir(parents=True, exist_ok=True)
-
-    # Decide on CPU or GPU automatically
-    device = Device.auto  # or Device.cpu / Device.cuda if you prefer
-
+    
+    # Force GPU usage
+    device = Device.cuda  # Change from auto to cuda to force GPU usage
+    
     # 1) FEATURE EXTRACTION
-    # Build a SiftExtractionOptions object if you want custom extraction settings
     sift_extraction_opts = SiftExtractionOptions()
-    # If your build supports these fields:
     sift_extraction_opts.estimate_affine_shape = True
     sift_extraction_opts.upright = False
-    # sift_extraction_opts.domain_size_pooling = True  # if supported
-
+    sift_extraction_opts.use_gpu = True  # Force GPU usage
+    sift_extraction_opts.gpu_index = 0   # Use first GPU
+    
     print("Running feature extraction...")
     pycolmap.extract_features(
         database_path=str(database_path),
         image_path=str(images_path),
-        camera_mode=CameraMode.AUTO,  # or CameraMode.SINGLE
+        camera_mode=CameraMode.AUTO,
         sift_options=sift_extraction_opts,
         device=device
     )
-
+    
     # 2) EXHAUSTIVE MATCHING
-    # In PyColmap 3.11.1, you can call match_exhaustive(...) after features are extracted.
     print("Running exhaustive feature matching...")
-    pycolmap.match_exhaustive(
-        database_path=str(database_path),
-        # there's no 'device' arg or SiftMatchingOptions in this approach
-    )
-
+    # For pycolmap 3.11.1, we need to use the lower-level API to configure GPU
+    sift_matching_opts = pycolmap.SiftMatchingOptions()
+    sift_matching_opts.use_gpu = True
+    sift_matching_opts.gpu_index = 0
+    
+    # Use the lower-level API to specify GPU for matching
+    matcher = pycolmap.create_exhaustive_matcher(sift_matching_opts)
+    matcher.match(database_path=str(database_path))
+    
     # 3) INCREMENTAL MAPPING
     print("Running incremental mapping...")
+    mapper_options = pycolmap.IncrementalMapperOptions()
+    mapper_options.sift_options.use_gpu = True
+    mapper_options.sift_options.gpu_index = 0
+    
     reconstructions = pycolmap.incremental_mapping(
         database_path=str(database_path),
         image_path=str(images_path),
         output_path=str(sparse_path),
+        options=mapper_options,
         device=device
     )
-
+    
     model_path = workspace_dir / "model.ply"
     if len(reconstructions) == 0:
         raise RuntimeError("No reconstruction could be created from the provided frames.")
-
+    
     # Pick the largest reconstruction and export to PLY
     largest_model = max(reconstructions, key=lambda rc: len(rc.images))
     largest_model.export_PLY(str(model_path))
     print(f"Exported model to {model_path}")
-
+    
     return model_path
 
 @app.route('/create_model')
