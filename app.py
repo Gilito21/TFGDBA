@@ -841,7 +841,7 @@ def create_model():
                 return
             
             # Run COLMAP reconstruction
-            model_path = run_colmap_reconstruction(workspace_dir)
+            model_path, model_id = run_colmap_reconstruction(workspace_dir)
             
             # Create a visualization from the resulting PLY
             fig = plt.figure(figsize=(12, 10))
