@@ -114,12 +114,6 @@ def extract_frames(video_path, output_folder, frame_interval=5):
     print(f"Inserted {len(frames)} frames into MongoDB.")
     return extracted_count
 
-# Example usage:
-video_path = "uploads/your_video.mp4"
-output_folder = "frames"
-extract_frames(video_path, output_folder, frame_interval=10)
-
-
 @app.route('/')
 def upload_form():
     return render_template_string('''
