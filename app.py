@@ -892,15 +892,7 @@ def create_model():
             point_count = len(points)
             
             # Insert model record in MongoDB
-            models_collection.insert_one({
-                "name": model_name,
-                "data": model_data,
-                "visualization": viz_data,
-                "frame_count": len(frame_paths),
-                "point_count": point_count,
-                "created_at": datetime.datetime.now(),
-                "gpu_used": USE_GPU
-            })
+            insert_model_to_mongodb(model_name, model_data, viz_data, len(frame_paths), point_count, USE_GPU)
             
         except Exception as e:
             app.logger.error(f"Error creating 3D model: {str(e)}")
@@ -925,18 +917,13 @@ def list_models():
     model_previews = []
     for model in model_list:
         model_previews.append({
-            "name": model["name"],
-            "created_at": model["created_at"].strftime('%Y-%m-%d %H:%M') if model["created_at"] else 'N/A',
-            "frame_count": model["frame_count"],
-            "point_count": model["point_count"],
-            "gpu_used": model["gpu_used"],
-            "view_url": f"/model_view/{model['name']}"
+            "name": model.get("name", "N/A"),
+            "created_at": model.get("created_at", "N/A").strftime('%Y-%m-%d %H:%M') if model.get("created_at") else 'N/A',
+            "frame_count": model.get("frame_count", "N/A"),
+            "point_count": model.get("point_count", "N/A"),
+            "gpu_used": model.get("gpu_used", "N/A"),
+            "view_url": f"/model_view/{model.get('name', '')}"
         })
-    
-    # Convert created_at to datetime object if it's a string
-    for model in model_list:
-        if 'created_at' in model and isinstance(model['created_at'], str):
-            model['created_at'] = datetime.fromisoformat(model['created_at'])
     
     return render_template_string('''
         <!doctype html>
@@ -968,12 +955,12 @@ def list_models():
                         </tr>
                         {% for model in models %}
                             <tr>
-                                <td>{{ model.name or 'N/A' }}</td>
+                                <td>{{ model.name }}</td>
                                 <td>{{ model.created_at }}</td>
-                                <td>{{ model.point_count or 'N/A' }}</td>
-                                <td>{{ model.frame_count or 'N/A' }}</td>
+                                <td>{{ model.point_count }}</td>
+                                <td>{{ model.frame_count }}</td>
                                 <td>
-                                    {% if model.gpu_used is not none %}
+                                    {% if model.gpu_used != 'N/A' %}
                                         <span class="gpu-badge {{ 'gpu-active'}}">
                                             {{ 'GPU'}}
                                         </span>
@@ -996,7 +983,7 @@ def list_models():
             </div>
         </body>
         </html>
-    ''', models=model_list)
+    ''', models=model_previews)
 
 @app.route('/frame/<filename>')
 def get_frame(filename):
@@ -1022,6 +1009,21 @@ def get_model(filename):
         tmp_file.write(model_data["data"])
         tmp_file_path = tmp_file.name
         return send_file(tmp_file_path, as_attachment=True, download_name=filename)
+
+def insert_model_to_mongodb(model_name, model_data, viz_data, frame_count, point_count, use_gpu):
+    """Insert a model document into MongoDB."""
+    model_document = {
+        "name": model_name,
+        "data": model_data,
+        "visualization": viz_data,
+        "frame_count": frame_count,
+        "point_count": point_count,
+        "created_at": datetime.datetime.now(),
+        "gpu_used": use_gpu
+    }
+    models_collection.insert_one(model_document)
+
+
 
 @app.route('/model_view/<filename>')
 def view_model_3d(filename):
