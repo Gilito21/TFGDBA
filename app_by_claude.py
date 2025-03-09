@@ -95,13 +95,11 @@ def extract_frames(video_path, output_folder, frame_interval=5):
             frame_filename = f"frame_{extracted_count:04d}.jpg"
             output_path = Path(output_folder) / frame_filename
             cv2.imwrite(str(output_path), frame)
+            print(f"Saving frame {frame_count} as {frame_filename}")
             extracted_count += 1
 
     cap.release()
     
-    print(f"Extracted {extracted_count} frames out of {frame_count} total frames using OpenCV.")
-    
-    # Save frames to MongoDB
     frames = sorted(Path(output_folder).glob('frame_*.jpg'))
     for frame_path in frames:
         with open(frame_path, "rb") as f:
@@ -110,6 +108,11 @@ def extract_frames(video_path, output_folder, frame_interval=5):
                 "filename": frame_path.name,
                 "data": frame_data
             })
+            
+    print(f"Extracted {len(frames)} frames out of {frame_count} total frames using OpenCV.")
+    
+    # Save frames to MongoDB
+    
     
     print(f"Inserted {len(frames)} frames into MongoDB.")
     return extracted_count
