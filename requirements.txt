@@ -8,3 +8,4 @@ pycolmap
 pymongo
 torch
 matplotlib
+trimesh
