@@ -65,7 +65,7 @@ def extract_frames(video_path, output_folder, frame_interval=5):
         'ffmpeg',
         '-i', video_path,
         '-vf', filter_expr,
-        '-vsync', '0',  # Variable frame rate
+        '-vsync', 'vfr',  # Variable frame rate
         '-q:v', '1',  # Quality level (lower is better)
         f'{output_folder}/frame_%04d.jpg'
     ]
