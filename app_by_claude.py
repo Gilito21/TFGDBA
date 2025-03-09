@@ -54,7 +54,7 @@ if USE_GPU:
 else:
     print("No GPU detected, using CPU")
 
-def extract_frames_ffmpeg(video_path, output_folder, frame_interval=5):
+def extract_frames(video_path, output_folder, frame_interval=5):
     """Extract frames using FFmpeg which is very efficient"""
     os.makedirs(output_folder, exist_ok=True)
     
