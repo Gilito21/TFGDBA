@@ -70,8 +70,19 @@ def extract_frames(video_path, output_folder, frame_interval=5):
         f'{output_folder}/frame_%04d.jpg'
     ]
     
+    # Print the FFmpeg command for debugging
+    print(f"Running FFmpeg command: {' '.join(ffmpeg_cmd)}")
+    
     # Run the command
-    subprocess.run(ffmpeg_cmd, check=True)
+    result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+    
+    # Print the FFmpeg output for debugging
+    print(f"FFmpeg output: {result.stdout}")
+    print(f"FFmpeg errors: {result.stderr}")
+    
+    # Check if the FFmpeg command was successful
+    if result.returncode != 0:
+        raise RuntimeError(f"FFmpeg command failed with return code {result.returncode}")
     
     # Get list of extracted frames
     frames = sorted(Path(output_folder).glob('frame_*.jpg'))
