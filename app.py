@@ -916,9 +916,15 @@ def list_models():
     # Prepare model previews
     model_previews = []
     for model in model_list:
+        created_at = model.get("created_at", "N/A")
+        if isinstance(created_at, datetime.datetime):
+            created_at_str = created_at.strftime('%Y-%m-%d %H:%M')
+        else:
+            created_at_str = 'N/A'
+        
         model_previews.append({
             "name": model.get("name", "N/A"),
-            "created_at": model.get("created_at", "N/A").strftime('%Y-%m-%d %H:%M') if model.get("created_at") else 'N/A',
+            "created_at": created_at_str,
             "frame_count": model.get("frame_count", "N/A"),
             "point_count": model.get("point_count", "N/A"),
             "gpu_used": model.get("gpu_used", "N/A"),
