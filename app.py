@@ -600,11 +600,11 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         subprocess.run(cmd, check=True)
         
         # Validate PLY file content
-        with open(ply_model_path, 'r') as ply_file:
-            lines = ply_file.readlines()
-            if not lines[0].strip() == 'ply':
+        with open(ply_model_path, 'rb') as ply_file:
+            header = ply_file.read(100).decode('ascii', errors='ignore')
+            if not header.startswith('ply'):
                 raise ValueError("Invalid PLY file format")
-            if 'end_header' not in lines:
+            if 'end_header' not in header:
                 raise ValueError("Missing end_header in PLY file")
 
         # Convert PLY to OBJ using trimesh
