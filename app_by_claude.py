@@ -468,14 +468,17 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         model_creation_progress["percent_complete"] = 25
         model_creation_progress["is_complete"] = False
         
-        # 1. Feature extraction (with GPU)
+        # 1. Feature extraction (with GPU) - Modified for better features
         print("Running feature extraction...")
         cmd = [
             colmap_exe, "feature_extractor",
             "--database_path", str(database_path),
             "--image_path", str(images_path),
             "--SiftExtraction.use_gpu", "1",
-            "--SiftExtraction.gpu_index", "0"
+            "--SiftExtraction.gpu_index", "0",
+            "--SiftExtraction.max_num_features", "8192",  # Increased from default
+            "--SiftExtraction.first_octave", "-1",        # Start at a higher resolution
+            "--ImageReader.single_camera", "1"            # Assume single camera model for video frames
         ]
         subprocess.run(cmd, check=True)
         
@@ -484,13 +487,16 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         model_creation_progress["step_name"] = "Feature Matching"
         model_creation_progress["percent_complete"] = 50
         
-        # 2. Exhaustive matching (with GPU)
-        print("Running exhaustive feature matching...")
+        # 2. Sequential matching instead of exhaustive for video frames
+        print("Running sequential feature matching...")
         cmd = [
-            colmap_exe, "exhaustive_matcher",
+            colmap_exe, "sequential_matcher",
             "--database_path", str(database_path),
-            "--SiftMatching.use_gpu", "1",
-            "--SiftMatching.gpu_index", "0"
+            "--SiftMatching.use_gpu", "1", 
+            "--SiftMatching.gpu_index", "0",
+            "--SiftMatching.max_ratio", "0.8",           # Stricter ratio test
+            "--SequentialMatching.overlap", "10",        # Match with 10 neighboring frames
+            "--SequentialMatching.quadratic_overlap", "1" # Use quadratic overlap for more stability
         ]
         subprocess.run(cmd, check=True)
         
@@ -499,13 +505,41 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         model_creation_progress["step_name"] = "3D Reconstruction"
         model_creation_progress["percent_complete"] = 75
         
-        # 3. Mapper
+        # 3. Mapper with more stable parameters
         print("Running incremental mapping...")
         cmd = [
             colmap_exe, "mapper",
             "--database_path", str(database_path),
             "--image_path", str(images_path),
-            "--output_path", str(sparse_path)
+            "--output_path", str(sparse_path),
+            "--Mapper.ba_refine_focal_length", "1",     # Allow focal length refinement
+            "--Mapper.ba_refine_principal_point", "0",  # Fix principal point for stability
+            "--Mapper.ba_refine_extra_params", "0",     # Don't refine extra params
+            "--Mapper.ba_global_use_pba", "0",          # Don't use PBA which can be unstable
+            "--Mapper.filter_max_reproj_error", "4.0",  # Stricter reprojection error
+            "--Mapper.ba_global_max_refinements", "5",  # More refinements for better results
+            "--Mapper.min_num_matches", "15",           # Require more matches
+            "--Mapper.init_min_num_inliers", "25",      # More inliers for initialization
+            "--Mapper.ba_local_max_num_iterations", "50", # More iterations for local bundle adjustment
+            "--Mapper.ba_global_max_num_iterations", "100" # More iterations for global bundle adjustment
+        ]
+        subprocess.run(cmd, check=True)
+        
+        # 4. Bundle adjustment as a separate step
+        print("Running bundle adjustment to refine the solution...")
+        model_folder = list(sparse_path.glob("*"))[0]  # Get the first reconstruction
+        cmd = [
+            colmap_exe, "bundle_adjuster",
+            "--input_path", str(model_folder), 
+            "--output_path", str(model_folder),
+            "--BundleAdjustment.refine_focal_length", "1",
+            "--BundleAdjustment.refine_principal_point", "0",
+            "--BundleAdjustment.refine_extra_params", "0",
+            "--BundleAdjustment.function_tolerance", "0.0001",
+            "--BundleAdjustment.gradient_tolerance", "0.0001",
+            "--BundleAdjustment.parameter_tolerance", "0.0001",
+            "--BundleAdjustment.max_num_iterations", "100",
+            "--BundleAdjustment.max_linear_solver_iterations", "200"
         ]
         subprocess.run(cmd, check=True)
         
@@ -514,9 +548,18 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         model_creation_progress["step_name"] = "Exporting Model"
         model_creation_progress["percent_complete"] = 90
         
+        # 5. Filter points for cleaner model
+        print("Filtering points...")
+        cmd = [
+            colmap_exe, "model_converter",
+            "--input_path", str(model_folder),
+            "--output_path", str(model_folder),
+            "--min_track_length", "3"
+        ]
+        subprocess.run(cmd, check=True)
+        
         # Export to PLY
         model_path = workspace_dir / "model.ply"
-        model_folder = list(sparse_path.glob("*"))[0]  # Get the first reconstruction
         cmd = [
             colmap_exe, "model_converter",
             "--input_path", str(model_folder),
