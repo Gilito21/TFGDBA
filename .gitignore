@@ -19,12 +19,3 @@ logs/
 *.db
 frames/
 models/
-
-# Vercel & Node.js
-node_modules/
-.vercel/
-.vercel/cache/
-package-lock.json
-
-# AWS Secrets
-.env
