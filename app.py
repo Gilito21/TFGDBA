@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from base64 import b64encode
 import trimesh
+import subprocess
 
 app = Flask(__name__)
 
@@ -463,18 +464,6 @@ def delete_mongo_frames():
         app.logger.error(f"Error deleting frames from MongoDB: {str(e)}")
         return jsonify({"success": False, "error": str(e)})
 
-import subprocess
-import os
-from pathlib import Path
-import shutil
-
-import datetime
-import os
-import shutil
-import subprocess
-from pathlib import Path
-import trimesh
-
 def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
     """Run COLMAP reconstruction using the custom CUDA-enabled build and update progress."""
     global model_creation_progress
@@ -905,8 +894,6 @@ def create_model():
     
     # Redirect to the progress page
     return redirect('/models')
-
-from datetime import datetime
 
 @app.route('/models')
 def list_models():
