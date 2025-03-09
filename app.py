@@ -473,7 +473,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-import trimesh  # Make sure to install trimesh: pip install trimesh
+import trimesh
 
 def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
     """Run COLMAP reconstruction using the custom CUDA-enabled build and update progress."""
@@ -878,10 +878,8 @@ def create_model():
             plt.close()
             
             # Generate a unique name for the model
-            model_name = f"colmap_model_{timestamp}.ply"
+            model_name = f"colmap_model_{timestamp}.obj"
             model_output_path = os.path.join(MODEL_FOLDER, model_name)
-            
-            # Copy the model PLY to the models folder
             shutil.copy(model_path, model_output_path)
             
             # Read data for MongoDB
@@ -901,7 +899,7 @@ def create_model():
                 "frame_count": len(frame_paths),
                 "point_count": point_count,
                 "created_at": datetime.datetime.now(),
-                "gpu_used": USE_GPU  # Fixed variable name
+                "gpu_used": USE_GPU
             })
             
         except Exception as e:
