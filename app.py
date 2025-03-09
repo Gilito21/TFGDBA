@@ -652,6 +652,182 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         # Update progress with error
         model_creation_progress["error"] = str(e)
         print(f"Error in reconstruction: {str(e)}")
+        raise e    """Run COLMAP reconstruction using the custom CUDA-enabled build and update progress."""
+    global model_creation_progress
+    
+    try:
+        database_path = workspace_dir / "database.db"
+        images_path = workspace_dir / "images"
+        sparse_path = workspace_dir / "sparse"
+        
+        # Clean up old files
+        if database_path.exists():
+            os.remove(database_path)
+        if sparse_path.exists():
+            shutil.rmtree(sparse_path)
+        sparse_path.mkdir(parents=True, exist_ok=True)
+        
+        # Path to your custom COLMAP build
+        colmap_exe = "/home/ubuntu/TFGDBA/colmap/build/src/colmap/exe/colmap"
+        
+        # Initialize progress
+        model_creation_progress["current_step"] = 1
+        model_creation_progress["step_name"] = "Feature Extraction"
+        model_creation_progress["percent_complete"] = 25
+        model_creation_progress["is_complete"] = False
+        
+        # 1. Feature extraction (with GPU)
+        print("Running feature extraction...")
+        cmd = [
+            colmap_exe, "feature_extractor",
+            "--database_path", str(database_path),
+            "--image_path", str(images_path),
+            "--SiftExtraction.use_gpu", "1",
+            "--SiftExtraction.gpu_index", "0",
+            "--SiftExtraction.max_num_features", "8192",
+            "--SiftExtraction.first_octave", "-1",
+            "--ImageReader.single_camera", "1"
+        ]
+        subprocess.run(cmd, check=True)
+        
+        # Update progress
+        model_creation_progress["current_step"] = 2
+        model_creation_progress["step_name"] = "Feature Matching"
+        model_creation_progress["percent_complete"] = 50
+        
+        # 2. Sequential matching for video frames
+        print("Running sequential feature matching...")
+        cmd = [
+            colmap_exe, "sequential_matcher",
+            "--database_path", str(database_path),
+            "--SiftMatching.use_gpu", "1", 
+            "--SiftMatching.gpu_index", "0",
+            "--SiftMatching.max_ratio", "0.8",
+            "--SequentialMatching.overlap", "10",
+            "--SequentialMatching.quadratic_overlap", "1"
+        ]
+        subprocess.run(cmd, check=True)
+        
+        # Update progress
+        model_creation_progress["current_step"] = 3
+        model_creation_progress["step_name"] = "3D Reconstruction"
+        model_creation_progress["percent_complete"] = 75
+        
+        # 3. Incremental mapping
+        print("Running incremental mapping...")
+        cmd = [
+            colmap_exe, "mapper",
+            "--database_path", str(database_path),
+            "--image_path", str(images_path),
+            "--output_path", str(sparse_path),
+            "--Mapper.ba_refine_focal_length", "1",
+            "--Mapper.ba_refine_principal_point", "0",
+            "--Mapper.ba_refine_extra_params", "0",
+            "--Mapper.filter_max_reproj_error", "4.0",
+            "--Mapper.ba_global_max_refinements", "5",
+            "--Mapper.min_num_matches", "15",
+            "--Mapper.init_min_num_inliers", "25",
+            "--Mapper.ba_local_max_num_iterations", "50",
+            "--Mapper.ba_global_max_num_iterations", "100"
+        ]
+        subprocess.run(cmd, check=True)
+        
+        # 4. Bundle adjustment
+        print("Running bundle adjustment to refine the solution...")
+        model_folder = list(sparse_path.glob("*"))[0]  # Get the first reconstruction
+        cmd = [
+            colmap_exe, "bundle_adjuster",
+            "--input_path", str(model_folder), 
+            "--output_path", str(model_folder),
+            "--BundleAdjustment.refine_focal_length", "1",
+            "--BundleAdjustment.refine_principal_point", "0",
+            "--BundleAdjustment.refine_extra_params", "0",
+            "--BundleAdjustment.function_tolerance", "0.0001",
+            "--BundleAdjustment.gradient_tolerance", "0.0001",
+            "--BundleAdjustment.parameter_tolerance", "0.0001",
+            "--BundleAdjustment.max_num_iterations", "100",
+            "--BundleAdjustment.max_linear_solver_iterations", "200"
+        ]
+        subprocess.run(cmd, check=True)
+        
+        # Update progress
+        model_creation_progress["current_step"] = 4
+        model_creation_progress["step_name"] = "Exporting Model"
+        model_creation_progress["percent_complete"] = 90
+        
+        # 5. Filter points for cleaner model
+        print("Filtering points...")
+        cmd = [
+            colmap_exe, "model_converter",
+            "--input_path", str(model_folder),
+            "--output_path", str(model_folder),
+            "--output_type", "BIN"
+        ]
+        subprocess.run(cmd, check=True)
+        
+        # Export to PLY format
+        ply_model_path = workspace_dir / "model.ply"
+        cmd = [
+            colmap_exe, "model_converter",
+            "--input_path", str(model_folder),
+            "--output_path", str(ply_model_path),
+            "--output_type", "PLY"
+        ]
+        subprocess.run(cmd, check=True)
+        
+        # Validate PLY file content
+        with open(ply_model_path, 'r') as ply_file:
+            lines = ply_file.readlines()
+            if not lines[0].strip() == 'ply':
+                raise ValueError("Invalid PLY file format")
+            if 'end_header' not in lines:
+                raise ValueError("Missing end_header in PLY file")
+
+        # Convert PLY to OBJ using trimesh
+        print("Converting PLY to OBJ...")
+        try:
+            mesh = trimesh.load(ply_model_path)
+            obj_model_path = ply_model_path.with_suffix(".obj")
+            mesh.export(obj_model_path)
+        except Exception as e:
+            print(f"Error converting PLY to OBJ: {str(e)}")
+            raise
+
+        # Save model to persistent storage
+        timestamp = datetime.datetime.now().isoformat()
+        model_file_name = f"model_{timestamp.replace(':', '-')}.obj"
+        persistent_model_path = Path(MODEL_FOLDER) / model_file_name
+        shutil.copy(obj_model_path, persistent_model_path)
+        
+        # Save model metadata to MongoDB
+        model_document = {
+            "filename": model_file_name,
+            "path": str(persistent_model_path),
+            "created_at": timestamp,
+            "video_id": video_id,
+            "status": "completed",
+            "reconstruction_data": {
+                "num_images": len(list(images_path.glob("*.*"))),
+                "workspace_path": str(workspace_dir)
+            }
+        }
+        
+        # Insert into MongoDB
+        model_id = models_collection.insert_one(model_document).inserted_id
+        
+        # Update progress with model information
+        model_creation_progress["percent_complete"] = 100
+        model_creation_progress["is_complete"] = True
+        model_creation_progress["model_path"] = str(persistent_model_path)
+        model_creation_progress["model_id"] = str(model_id)
+        
+        print(f"Exported model to {persistent_model_path} and saved to database with ID: {model_id}")
+        return persistent_model_path, model_id
+        
+    except Exception as e:
+        # Update progress with error
+        model_creation_progress["error"] = str(e)
+        print(f"Error in reconstruction: {str(e)}")
         raise e
 
 
@@ -912,7 +1088,7 @@ def create_model():
     thread.start()
     
     # Redirect to the progress page
-    return redirect('/create_model_progress')
+    return redirect('/models')
 
 from datetime import datetime
 
@@ -921,84 +1097,81 @@ def list_models():
     """List all created 3D models"""
     model_list = list(models_collection.find({}, {"name": 1, "_id": 0, "created_at": 1, "frame_count": 1, "point_count": 1, "gpu_used": 1}))
     
+    # Prepare model previews
+    model_previews = []
+    for model in model_list:
+        model_previews.append({
+            "name": model["name"],
+            "created_at": model["created_at"].strftime('%Y-%m-%d %H:%M') if model["created_at"] else 'N/A',
+            "frame_count": model["frame_count"],
+            "point_count": model["point_count"],
+            "gpu_used": model["gpu_used"],
+            "view_url": f"/model_view/{model['name']}"
+        })
+    
     # Convert created_at to datetime object if it's a string
     for model in model_list:
         if 'created_at' in model and isinstance(model['created_at'], str):
             model['created_at'] = datetime.fromisoformat(model['created_at'])
     
     return render_template_string('''
-    <!doctype html>
-    <html>
-    <head>
-        <title>3D Models</title>
-        <style>
-            /* Styles omitted for brevity */
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>3D Models</h1>
-            
-            <div class="main-actions">
-                <a href="/"><button>Back to Upload</button></a>
-                <a href="/frames"><button>View Frames</button></a>
-            </div>
-            
-            {% if models %}
-                <table>
-                    <tr>
-                        <th>Preview</th>
-                        <th>Model Name</th>
-                        <th>Created</th>
-                        <th>Points</th>
-                        <th>Frames</th>
-                        <th>Processing</th>
-                        <th>Actions</th>
-                    </tr>
-                    {% for model in models %}
-                        <tr>
-                            <td>
-                                {% if model.name %}
-                                    <a href="/model_view/{{ model.name.split('.')[0] }}" target="_blank">
-                                        <img class="thumbnail" src="/model_view/{{ model.name.split('.')[0] }}" alt="Preview">
-                                    </a>
-                                {% else %}
-                                    N/A
-                                {% endif %}
-                            </td>
-                            <td>{{ model.name or 'N/A' }}</td>
-                            <td>{{ model.created_at.strftime('%Y-%m-%d %H:%M') if model.created_at else 'N/A' }}</td>
-                            <td>{{ model.point_count or 'N/A' }}</td>
-                            <td>{{ model.frame_count or 'N/A' }}</td>
-                            <td>
-                                {% if model.gpu_used is not none %}
-                                    <span class="gpu-badge {{ 'gpu-active'}}">
-                                        {{ 'GPU'}}
-                                    </span>
-                                {% else %}
-                                    N/A
-                                {% endif %}
-                            </td>
-                            <td class="actions">
-                                {% if model.name %}
-                                    <a href="/model/{{ model.name }}" download>Download</a>
-                                    <a href="/model_view/{{ model.name }}">View</a>
-                                {% else %}
-                                    N/A
-                                {% endif %}
-                            </td>
-                        </tr>
-                    {% endfor %}
-                </table>
-            {% else %}
-                <div class="no-models">
-                    <p>No 3D models have been created yet.</p>
-                    <p>Go to the frames page to create a 3D model using COLMAP.</p>
+        <!doctype html>
+        <html>
+        <head>
+            <title>3D Models</title>
+            <style>
+                /* Styles omitted for brevity */
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>3D Models</h1>
+                
+                <div class="main-actions">
+                    <a href="/"><button>Back to Upload</button></a>
+                    <a href="/frames"><button>View Frames</button></a>
                 </div>
-            {% endif %}
-        </div>
-    </body>
-    </html>
+                
+                {% if models %}
+                    <table>
+                        <tr>
+                            <th>Model Name</th>
+                            <th>Created</th>
+                            <th>Points</th>
+                            <th>Frames</th>
+                            <th>Processing</th>
+                            <th>Actions</th>
+                        </tr>
+                        {% for model in models %}
+                            <tr>
+                                <td>{{ model.name or 'N/A' }}</td>
+                                <td>{{ model.created_at }}</td>
+                                <td>{{ model.point_count or 'N/A' }}</td>
+                                <td>{{ model.frame_count or 'N/A' }}</td>
+                                <td>
+                                    {% if model.gpu_used is not none %}
+                                        <span class="gpu-badge {{ 'gpu-active'}}">
+                                            {{ 'GPU'}}
+                                        </span>
+                                    {% else %}
+                                        N/A
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <a href="{{ model.view_url }}">View 3D Model</a>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </table>
+                {% else %}
+                    <div class="no-models">
+                        <p>No 3D models have been created yet.</p>
+                        <p>Go to the frames page to create a 3D model using COLMAP.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </body>
+        </html>
     ''', models=model_list)
 
 @app.route('/frame/<filename>')
@@ -1373,7 +1546,7 @@ def view_model_3d(filename):
         </script>
     </body>
     </html>
-    ''', model_name=filename, point_count=format_number(model_data.get("point_count", 0)), created_at=created_at)
+    ''', model_name=filename, point_count=model_data.get("point_count", "N/A"), created_at=created_at)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
