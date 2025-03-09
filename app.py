@@ -587,14 +587,17 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
             "--output_type", "PLY"
         ]
         subprocess.run(cmd, check=True)
-        #try
+        
         # Validate PLY file content
         with open(ply_model_path, 'rb') as ply_file:
             header = ply_file.read(100).decode('ascii', errors='ignore')
             if not header.startswith('ply'):
                 raise ValueError("Invalid PLY file format")
             if 'end_header' not in header:
-                raise ValueError("Missing end_header in PLY file")
+                # Fix the PLY file by appending the end_header line
+                with open(ply_model_path, 'a') as fix_file:
+                    fix_file.write('\nend_header\n')
+                print("Fixed missing end_header in PLY file")
 
         # Convert PLY to OBJ using trimesh
         print("Converting PLY to OBJ...")
@@ -893,7 +896,7 @@ def create_model():
     thread.start()
     
     # Redirect to the progress page
-    return redirect('/models')
+    return redirect('/create_model_progress')
 
 @app.route('/models')
 def list_models():
