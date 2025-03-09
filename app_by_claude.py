@@ -40,7 +40,7 @@ models_collection = db["models"]
 model_creation_progress = {
     "current_step": 0,
     "total_steps": 4,  # Feature extraction, matching, mapping, export
-    "step_name": "Initializing",
+    "step_name": "Importing images to the model (this can take up to 2 minutes, hang on)",
     "percent_complete": 0,
     "is_complete": False,
     "error": None,
@@ -634,7 +634,7 @@ def create_model_progress():
             <div class="loading-spinner" id="spinner"></div>
             
             <div class="progress-container">
-                <div class="step-name" id="stepName">Initializing...</div>
+                <div class="step-name" id="stepName">Importing images to the model (this can take up to 2 minutes, hang on)</div>
                 <div class="progress-bar">
                     <div class="progress-fill" id="progressFill"></div>
                 </div>
@@ -740,7 +740,7 @@ def create_model():
     model_creation_progress = {
         "current_step": 0,
         "total_steps": 4,
-        "step_name": "Initializing",
+        "step_name": "Importing images to the model (this can take up to 2 minutes, hang on)",
         "percent_complete": 0,
         "is_complete": False,
         "error": None,
