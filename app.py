@@ -974,8 +974,8 @@ def list_models():
                             <td>{{ model.frame_count or 'N/A' }}</td>
                             <td>
                                 {% if model.gpu_used is not none %}
-                                    <span class="gpu-badge {{ 'gpu-active' if model.gpu_used else 'gpu-inactive' }}">
-                                        {{ 'GPU' if model.gpu_used else 'CPU' }}
+                                    <span class="gpu-badge {{ 'gpu-active'}}">
+                                        {{ 'GPU'}}
                                     </span>
                                 {% else %}
                                     N/A
