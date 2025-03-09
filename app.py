@@ -634,7 +634,7 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         model_creation_progress["model_id"] = str(model_id)
         
         print(f"Exported model to {persistent_model_path} and saved to database with ID: {model_id}")
-        return persistent_model_path, model_id
+        return str(persistent_model_path), str(model_id)
         
     except Exception as e:
         # Update progress with error
