@@ -395,8 +395,10 @@ def list_frames():
                     {% for frame in frames %}
                     <div class="frame-item">
                         <!-- Inline base64-encoded image -->
-                        <img src="data:image/jpeg;base64,{{ frame.image_data }}" 
-                             class="frame-img" alt="{{ frame.filename }}">
+                        <a href="/frame/{{ frame.filename }}" download="{{ frame.filename }}">
+                            <img src="data:image/jpeg;base64,{{ frame.image_data }}" 
+                                 class="frame-img" alt="{{ frame.filename }}">
+                        </a>
                         <div class="frame-name">{{ frame.filename }}</div>
                     </div>
                     {% endfor %}
@@ -442,8 +444,6 @@ def list_frames():
     except Exception as e:
         app.logger.error(f"Error in list_frames route: {str(e)}")
         return f"Error loading frames: {str(e)}", 500
-
-
 # Add a new route to handle MongoDB frame deletion
 @app.route('/delete_mongo_frames', methods=['POST'])
 def delete_mongo_frames():
