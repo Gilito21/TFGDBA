@@ -54,51 +54,71 @@ if USE_GPU:
 else:
     print("No GPU detected, using CPU")
 
+import cv2
+import os
+from pathlib import Path
+import subprocess  # Only needed if you use other subprocess calls
+# Make sure your MongoDB collection (frames_collection) is already defined and connected
+
 def extract_frames(video_path, output_folder, frame_interval=5):
-    """Extract frames using FFmpeg which is very efficient"""
+    """
+    Extract frames from a video using OpenCV.
+    
+    Parameters:
+      video_path (str): Path to the video file.
+      output_folder (str): Directory where extracted frames will be saved.
+      frame_interval (int): Save every Nth frame.
+    
+    Returns:
+      int: Number of frames extracted.
+    """
+    # Create the output directory if it doesn't exist.
     os.makedirs(output_folder, exist_ok=True)
     
-    # Calculate frames to extract (1 frame every 'frame_interval' frames)
-    filter_expr = f"select=not(mod(n\\,{frame_interval}))"
-    # Format: select='not(mod(n,5))' means select 1 frame every 5 frames
-    ffmpeg_cmd = [
-        'ffmpeg',
-        '-i', video_path,
-        '-vf', filter_expr,
-        '-vsync', 'vfr',  # Variable frame rate
-        '-q:v', '1',  # Quality level (lower is better)
-        f'{output_folder}/frame_%04d.jpg'
-    ]
+    # Open the video file using OpenCV.
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Failed to open video: {video_path}")
     
-    # Print the FFmpeg command for debugging
-    print(f"Running FFmpeg command: {' '.join(ffmpeg_cmd)}")
+    frame_count = 0
+    extracted_count = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break  # End of video
+        
+        frame_count += 1
+        
+        # Save every 'frame_interval'-th frame.
+        if frame_count % frame_interval == 0:
+            frame_filename = f"frame_{extracted_count:04d}.jpg"
+            output_path = Path(output_folder) / frame_filename
+            cv2.imwrite(str(output_path), frame)
+            extracted_count += 1
+
+    cap.release()
     
-    # Run the command
-    result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
-    
-    # Print the FFmpeg output for debugging
-    print(f"FFmpeg output: {result.stdout}")
-    print(f"FFmpeg errors: {result.stderr}")
-    
-    # Check if the FFmpeg command was successful
-    if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg command failed with return code {result.returncode}")
-    
-    # Get list of extracted frames
-    frames = sorted(Path(output_folder).glob('frame_*.jpg'))
-    extracted_count = len(frames)
+    print(f"Extracted {extracted_count} frames out of {frame_count} total frames using OpenCV.")
     
     # Save frames to MongoDB
+    frames = sorted(Path(output_folder).glob('frame_*.jpg'))
     for frame_path in frames:
         with open(frame_path, "rb") as f:
             frame_data = f.read()
             frames_collection.insert_one({
-                "filename": frame_path.name, 
+                "filename": frame_path.name,
                 "data": frame_data
             })
     
-    print(f"Extracted {extracted_count} frames using FFmpeg")
+    print(f"Inserted {len(frames)} frames into MongoDB.")
     return extracted_count
+
+# Example usage:
+video_path = "uploads/your_video.mp4"
+output_folder = "frames"
+extract_frames(video_path, output_folder, frame_interval=10)
+
 
 @app.route('/')
 def upload_form():
@@ -564,8 +584,7 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         cmd = [
             colmap_exe, "model_converter",
             "--input_path", str(model_folder),
-            "--output_path", str(model_folder),
-            "--min_track_length", "3"
+            "--output_path", str(model_folder)
         ]
         subprocess.run(cmd, check=True)
         
