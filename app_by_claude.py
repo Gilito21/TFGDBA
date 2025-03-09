@@ -59,11 +59,12 @@ def extract_frames(video_path, output_folder, frame_interval=5):
     os.makedirs(output_folder, exist_ok=True)
     
     # Calculate frames to extract (1 frame every 'frame_interval' frames)
+    filter_expr = f"select=not(mod(n\\,{frame_interval}))"
     # Format: select='not(mod(n,5))' means select 1 frame every 5 frames
     ffmpeg_cmd = [
         'ffmpeg',
         '-i', video_path,
-        '-vf', f"select=not(mod(n,{frame_interval}))",
+        '-vf', filter_expr,
         '-vsync', '0',  # Variable frame rate
         '-q:v', '1',  # Quality level (lower is better)
         f'{output_folder}/frame_%04d.jpg'
