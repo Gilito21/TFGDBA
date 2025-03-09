@@ -599,12 +599,24 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         ]
         subprocess.run(cmd, check=True)
         
+        # Validate PLY file content
+        with open(ply_model_path, 'r') as ply_file:
+            lines = ply_file.readlines()
+            if not lines[0].strip() == 'ply':
+                raise ValueError("Invalid PLY file format")
+            if 'end_header' not in lines:
+                raise ValueError("Missing end_header in PLY file")
+
         # Convert PLY to OBJ using trimesh
         print("Converting PLY to OBJ...")
-        mesh = trimesh.load(ply_model_path)
-        obj_model_path = ply_model_path.with_suffix(".obj")
-        mesh.export(obj_model_path)
-        
+        try:
+            mesh = trimesh.load(ply_model_path)
+            obj_model_path = ply_model_path.with_suffix(".obj")
+            mesh.export(obj_model_path)
+        except Exception as e:
+            print(f"Error converting PLY to OBJ: {str(e)}")
+            raise
+
         # Save model to persistent storage
         timestamp = datetime.datetime.now().isoformat()
         model_file_name = f"model_{timestamp.replace(':', '-')}.obj"
@@ -634,7 +646,7 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         model_creation_progress["model_id"] = str(model_id)
         
         print(f"Exported model to {persistent_model_path} and saved to database with ID: {model_id}")
-        return str(persistent_model_path), str(model_id)
+        return persistent_model_path, model_id
         
     except Exception as e:
         # Update progress with error
