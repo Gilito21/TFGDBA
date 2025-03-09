@@ -943,8 +943,8 @@ def list_models():
                     {% for model in models %}
                         <tr>
                             <td>
-                                <a href="/model_viz/{{ model.name.split('.')[0] }}" target="_blank">
-                                    <img class="thumbnail" src="/model_viz/{{ model.name.split('.')[0] }}" alt="Preview">
+                                <a href="/model_view/{{ model.name.split('.')[0] }}" target="_blank">
+                                    <img class="thumbnail" src="/model_view/{{ model.name.split('.')[0] }}" alt="Preview">
                                 </a>
                             </td>
                             <td>{{ model.name }}</td>
@@ -999,20 +999,354 @@ def get_model(filename):
         tmp_file_path = tmp_file.name
         return send_file(tmp_file_path, as_attachment=True, download_name=filename)
 
-@app.route('/model_viz/<filename>')
-def get_model_viz(filename):
-    """Retrieve and display the visualization of a specific 3D model"""
-    model_viz_data = models_collection.find_one({"name": filename + ".ply"})
- 
-    if not model_viz_data:
-        return "Model visualization not found", 404
-
-    visualization_data = model_viz_data["visualization"]
-    return Response(visualization_data, mimetype="image/png")
+@app.route('/model_view/<filename>')
+def view_model_3d(filename):
+    """View a 3D model using Three.js"""
+    model_data = models_collection.find_one({"name": filename})
     
-@app.template_filter('format_number')
-def format_number(value):
-    return f"{value:,}"
+    if not model_data:
+        return "Model not found", 404
+    
+    # Format the creation date
+    created_at = model_data["created_at"].strftime('%Y-%m-%d %H:%M')
+    
+    return render_template_string('''
+    <!doctype html>
+    <html>
+    <head>
+        <title>3D Model Viewer</title>
+        <style>
+            body { 
+                margin: 0; 
+                padding: 0; 
+                overflow: hidden; 
+                font-family: Arial, sans-serif;
+            }
+            #container { 
+                position: absolute; 
+                width: 100%; 
+                height: 100%; 
+            }
+            .controls {
+                position: absolute;
+                bottom: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(0,0,0,0.7);
+                padding: 10px 20px;
+                border-radius: 10px;
+                display: flex;
+                gap: 15px;
+                z-index: 100;
+            }
+            .controls button {
+                padding: 8px 15px;
+                background: #4299e1;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                cursor: pointer;
+                font-weight: bold;
+                transition: all 0.3s ease;
+            }
+            .controls button:hover {
+                background: #3182ce;
+            }
+            .info-panel {
+                position: absolute;
+                top: 20px;
+                right: 20px;
+                background: rgba(0,0,0,0.7);
+                color: white;
+                padding: 15px;
+                border-radius: 10px;
+                max-width: 300px;
+                font-size: 14px;
+                z-index: 100;
+            }
+            .loading {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                color: white;
+                background: rgba(0,0,0,0.7);
+                padding: 20px 40px;
+                border-radius: 10px;
+                font-size: 18px;
+                z-index: 200;
+            }
+            .back-button {
+                position: absolute;
+                top: 20px;
+                left: 20px;
+                z-index: 100;
+                padding: 10px 15px;
+                background: #4299e1;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                cursor: pointer;
+                font-weight: bold;
+                text-decoration: none;
+                transition: all 0.3s ease;
+            }
+            .back-button:hover {
+                background: #3182ce;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="container"></div>
+        <div id="loading" class="loading">Loading model...</div>
+        <a href="/models" class="back-button">Back to Models</a>
+        
+        <div class="controls">
+            <button id="wireframe">Toggle Wireframe</button>
+            <button id="rotate">Pause Rotation</button>
+            <button id="resetView">Reset View</button>
+            <button id="fullscreen">Fullscreen</button>
+        </div>
+        
+        <div class="info-panel">
+            <h3 style="margin-top: 0;">Model Information</h3>
+            <p><strong>Name:</strong> <span id="modelName"></span></p>
+            <p><strong>Points:</strong> <span id="pointCount"></span></p>
+            <p><strong>Created:</strong> <span id="createdDate"></span></p>
+        </div>
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.7/dat.gui.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.7.1/gsap.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/controls/OrbitControls.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/loaders/OBJLoader.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/loaders/PLYLoader.js"></script>
+
+        <script>
+            // Get the model filename from the URL
+            const modelFilename = '{{ model_name }}';
+            const modelType = modelFilename.split('.').pop().toLowerCase();
+            let isRotating = true;
+            
+            // Update model info
+            document.getElementById('modelName').textContent = '{{ model_name }}';
+            document.getElementById('pointCount').textContent = '{{ point_count }}';
+            document.getElementById('createdDate').textContent = '{{ created_at }}';
+
+            // Set up scene
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x111111);
+
+            // Set up camera
+            const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            // Set up renderer
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('container').appendChild(renderer.domElement);
+
+            // Set up lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(1, 1, 1);
+            scene.add(directionalLight);
+
+            const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight2.position.set(-1, -1, -1);
+            scene.add(directionalLight2);
+
+            // Add orbit controls
+            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // Create a group to hold the model
+            const modelGroup = new THREE.Group();
+            scene.add(modelGroup);
+
+            // Load the model based on file extension
+            let loader;
+            
+            if (modelType === 'obj') {
+                loader = new THREE.OBJLoader();
+            } else if (modelType === 'ply') {
+                loader = new THREE.PLYLoader();
+            } else {
+                alert('Unsupported file format');
+                document.getElementById('loading').textContent = 'Unsupported file format: ' + modelType;
+                document.getElementById('loading').style.display = 'block';
+            }
+
+            let model;
+
+            // Load the model
+            if (loader) {
+                loader.load(
+                    // Resource URL
+                    '/model/' + modelFilename,
+                    
+                    // onLoad callback
+                    function (loadedModel) {
+                        if (modelType === 'obj') {
+                            model = loadedModel;
+                            
+                            // Set material for all children
+                            model.traverse(function (child) {
+                                if (child.isMesh) {
+                                    child.material = new THREE.MeshPhongMaterial({
+                                        color: 0x4299e1,
+                                        specular: 0x111111,
+                                        shininess: 30,
+                                        flatShading: true
+                                    });
+                                }
+                            });
+                        } else if (modelType === 'ply') {
+                            // Create mesh from geometry
+                            const material = new THREE.MeshPhongMaterial({
+                                color: 0x4299e1,
+                                specular: 0x111111,
+                                shininess: 30,
+                                flatShading: true,
+                                vertexColors: true
+                            });
+                            
+                            model = new THREE.Mesh(loadedModel, material);
+                        }
+                        
+                        // Center the model
+                        const bbox = new THREE.Box3().setFromObject(model);
+                        const center = bbox.getCenter(new THREE.Vector3());
+                        const size = bbox.getSize(new THREE.Vector3());
+                        
+                        // Position camera based on model size
+                        const maxDim = Math.max(size.x, size.y, size.z);
+                        const fov = camera.fov * (Math.PI / 180);
+                        let cameraDistance = maxDim / (2 * Math.tan(fov / 2));
+                        
+                        // Add a little extra distance
+                        cameraDistance *= 1.5;
+                        camera.position.z = cameraDistance;
+                        
+                        // Reset controls
+                        controls.target.set(center.x, center.y, center.z);
+                        controls.update();
+                        
+                        // Center the model
+                        model.position.x = -center.x;
+                        model.position.y = -center.y;
+                        model.position.z = -center.z;
+                        
+                        modelGroup.add(model);
+                        
+                        // Hide loading indicator
+                        document.getElementById('loading').style.display = 'none';
+                    },
+                    
+                    // onProgress callback
+                    function (xhr) {
+                        const percentComplete = Math.round((xhr.loaded / xhr.total) * 100);
+                        document.getElementById('loading').textContent = 'Loading model... ' + percentComplete + '%';
+                    },
+                    
+                    // onError callback
+                    function (error) {
+                        console.error('Error loading model:', error);
+                        document.getElementById('loading').textContent = 'Error loading model: ' + error.message;
+                    }
+                );
+            }
+
+            // Handle wireframe toggle
+            let wireframeEnabled = false;
+            document.getElementById('wireframe').addEventListener('click', function() {
+                if (!model) return;
+                
+                wireframeEnabled = !wireframeEnabled;
+                
+                if (modelType === 'obj') {
+                    model.traverse(function (child) {
+                        if (child.isMesh) {
+                            child.material.wireframe = wireframeEnabled;
+                        }
+                    });
+                } else if (modelType === 'ply') {
+                    model.material.wireframe = wireframeEnabled;
+                }
+            });
+
+            // Handle rotation toggle
+            document.getElementById('rotate').addEventListener('click', function() {
+                isRotating = !isRotating;
+                this.textContent = isRotating ? 'Pause Rotation' : 'Resume Rotation';
+            });
+
+            // Handle reset view
+            document.getElementById('resetView').addEventListener('click', function() {
+                if (!model) return;
+                
+                // Animate camera position reset
+                gsap.to(camera.position, {
+                    duration: 1,
+                    x: 0,
+                    y: 0, 
+                    z: camera.position.z,
+                    ease: 'power2.inOut'
+                });
+                
+                // Animate controls target reset
+                gsap.to(controls.target, {
+                    duration: 1,
+                    x: 0,
+                    y: 0,
+                    z: 0,
+                    ease: 'power2.inOut',
+                    onUpdate: function() {
+                        controls.update();
+                    }
+                });
+            });
+
+            // Handle fullscreen
+            document.getElementById('fullscreen').addEventListener('click', function() {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen();
+                } else {
+                    if (document.exitFullscreen) {
+                        document.exitFullscreen();
+                    }
+                }
+            });
+
+            // Handle window resize
+            window.addEventListener('resize', function() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            // Animation loop
+            function animate() {
+                requestAnimationFrame(animate);
+                
+                // Auto-rotate model
+                if (isRotating && modelGroup) {
+                    modelGroup.rotation.y += 0.005;
+                }
+                
+                controls.update();
+                renderer.render(scene, camera);
+            }
+
+            animate();
+        </script>
+    </body>
+    </html>
+    ''', model_name=filename, point_count=format_number(model_data.get("point_count", 0)), created_at=created_at)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
