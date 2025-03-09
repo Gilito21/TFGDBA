@@ -934,7 +934,7 @@ def list_models():
             th, td { padding: 15px 10px; text-align: left; border-bottom: 1px solid #e2e8f0; }
             th { background-color: #4299e1; color: white; font-weight: 600; }
             tr:hover { background-color: #f7fafc; }
-            button { display: inline-block; padding: 12px 20px; font-size: 16px; color: white; background: #4299e1; text-decoration: none; border-radius: 8px; margin: 8px; border: none; cursor: pointer; font-weight: 600; transition: all 0.3s ease; }
+            button { display: inline-block; padding: 12px 20px; font-size: 16px; color: white; background: #4299e1; text-decoration: none; border-radius: 8px; margin: 8px; border: none; cursor: pointer; }
             button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
             .no-models { padding: 30px; text-align: center; font-size: 18px; color: #718096; background: #edf2f7; border-radius: 8px; margin-top: 20px; }
             .thumbnail { width: 100px; height: 75px; object-fit: cover; border-radius: 4px; transition: all 0.3s ease; }
@@ -970,22 +970,34 @@ def list_models():
                     {% for model in models %}
                         <tr>
                             <td>
-                                <a href="/model_view/{{ model.name.split('.')[0] }}" target="_blank">
-                                    <img class="thumbnail" src="/model_view/{{ model.name.split('.')[0] }}" alt="Preview">
-                                </a>
+                                {% if model.name %}
+                                    <a href="/model_view/{{ model.name.split('.')[0] }}" target="_blank">
+                                        <img class="thumbnail" src="/model_view/{{ model.name.split('.')[0] }}" alt="Preview">
+                                    </a>
+                                {% else %}
+                                    N/A
+                                {% endif %}
                             </td>
-                            <td>{{ model.name }}</td>
-                            <td>{{ model.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                            <td>{{ model.point_count }}</td>
-                            <td>{{ model.frame_count }}</td>
+                            <td>{{ model.name or 'N/A' }}</td>
+                            <td>{{ model.created_at.strftime('%Y-%m-%d %H:%M') if model.created_at else 'N/A' }}</td>
+                            <td>{{ model.point_count or 'N/A' }}</td>
+                            <td>{{ model.frame_count or 'N/A' }}</td>
                             <td>
-                                <span class="gpu-badge {{ 'gpu-active' if model.gpu_used else 'gpu-inactive' }}">
-                                    {{ 'GPU' if model.gpu_used else 'CPU' }}
-                                </span>
+                                {% if model.gpu_used is not none %}
+                                    <span class="gpu-badge {{ 'gpu-active' if model.gpu_used else 'gpu-inactive' }}">
+                                        {{ 'GPU' if model.gpu_used else 'CPU' }}
+                                    </span>
+                                {% else %}
+                                    N/A
+                                {% endif %}
                             </td>
                             <td class="actions">
-                                <a href="/model/{{ model.name }}" download>Download</a>
-                                <a href="/model_view/{{ model.name }}">View</a>
+                                {% if model.name %}
+                                    <a href="/model/{{ model.name }}" download>Download</a>
+                                    <a href="/model_view/{{ model.name }}">View</a>
+                                {% else %}
+                                    N/A
+                                {% endif %}
                             </td>
                         </tr>
                     {% endfor %}
