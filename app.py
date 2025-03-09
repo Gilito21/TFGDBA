@@ -599,6 +599,11 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
                     fix_file.write('\nend_header\n')
                 print("Fixed missing end_header in PLY file")
 
+        # Check the length of the PLY file
+        ply_file_size = os.path.getsize(ply_model_path)
+        if ply_file_size < 1000:  # Adjust the threshold as needed
+            raise ValueError("PLY file is unexpectedly short")
+
         # Convert PLY to OBJ using trimesh
         print("Converting PLY to OBJ...")
         try:
