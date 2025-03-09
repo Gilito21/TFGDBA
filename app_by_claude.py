@@ -54,56 +54,38 @@ if USE_GPU:
 else:
     print("No GPU detected, using CPU")
 
-def extract_frames(video_path, output_folder, frame_interval=5):
-    """Extract frames from a video file using CUDA acceleration and save to MongoDB"""
-    # Check if CUDA is available
-    if cv2.cuda.getCudaEnabledDeviceCount() == 0:
-        print("CUDA is not available, falling back to CPU processing")
-        use_cuda = False
-    else:
-        print(f"CUDA is available with {cv2.cuda.getCudaEnabledDeviceCount()} device(s)")
-        use_cuda = True
+def extract_frames_ffmpeg(video_path, output_folder, frame_interval=5):
+    """Extract frames using FFmpeg which is very efficient"""
+    os.makedirs(output_folder, exist_ok=True)
     
-    cap = cv2.VideoCapture(video_path)
-    frame_count = 0
-    extracted_count = 0
+    # Calculate frames to extract (1 frame every 'frame_interval' frames)
+    # Format: select='not(mod(n,5))' means select 1 frame every 5 frames
+    ffmpeg_cmd = [
+        'ffmpeg',
+        '-i', video_path,
+        '-vf', f'select=\'not(mod(n,{frame_interval}))\'',
+        '-vsync', 'vfr',  # Variable frame rate
+        '-q:v', '2',  # Quality level (lower is better)
+        f'{output_folder}/frame_%04d.jpg'
+    ]
     
-    # Create CUDA stream if CUDA is available
-    if use_cuda:
-        stream = cv2.cuda_Stream()
+    # Run the command
+    subprocess.run(ffmpeg_cmd, check=True)
     
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-            
-        if frame_count % frame_interval == 0:
-            if use_cuda:
-                # Upload frame to GPU memory
-                gpu_frame = cv2.cuda_GpuMat()
-                gpu_frame.upload(frame)
-                
-                # Process frame on GPU (optional processing like resizing or color conversion)
-                # For example: gpu_frame = cv2.cuda.resize(gpu_frame, (new_width, new_height))
-                
-                # Download processed frame back to CPU
-                frame = gpu_frame.download()
-            
-            # Save the frame
-            frame_filename = f"frame_{frame_count:04d}.jpg"
-            frame_path = os.path.join(output_folder, frame_filename)
-            cv2.imwrite(frame_path, frame)
-            
-            # Save frame data in MongoDB
-            with open(frame_path, "rb") as f:
-                frame_data = f.read()
-                frames_collection.insert_one({"filename": frame_filename, "data": frame_data})
-            
-            extracted_count += 1
-            
-        frame_count += 1
+    # Get list of extracted frames
+    frames = sorted(Path(output_folder).glob('frame_*.jpg'))
+    extracted_count = len(frames)
     
-    cap.release()
+    # Save frames to MongoDB
+    for frame_path in frames:
+        with open(frame_path, "rb") as f:
+            frame_data = f.read()
+            frames_collection.insert_one({
+                "filename": frame_path.name, 
+                "data": frame_data
+            })
+    
+    print(f"Extracted {extracted_count} frames using FFmpeg")
     return extracted_count
 
 @app.route('/')
