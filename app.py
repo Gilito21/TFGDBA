@@ -17,6 +17,7 @@ from flask import Flask, request, render_template_string, jsonify, Response, sen
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from base64 import b64encode
+import trimesh
 
 app = Flask(__name__)
 
@@ -467,6 +468,13 @@ import os
 from pathlib import Path
 import shutil
 
+import datetime
+import os
+import shutil
+import subprocess
+from pathlib import Path
+import trimesh  # Make sure to install trimesh: pip install trimesh
+
 def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
     """Run COLMAP reconstruction using the custom CUDA-enabled build and update progress."""
     global model_creation_progress
@@ -492,7 +500,7 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         model_creation_progress["percent_complete"] = 25
         model_creation_progress["is_complete"] = False
         
-        # 1. Feature extraction (with GPU) - Modified for better features
+        # 1. Feature extraction (with GPU)
         print("Running feature extraction...")
         cmd = [
             colmap_exe, "feature_extractor",
@@ -500,9 +508,9 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
             "--image_path", str(images_path),
             "--SiftExtraction.use_gpu", "1",
             "--SiftExtraction.gpu_index", "0",
-            "--SiftExtraction.max_num_features", "8192",  # Increased from default
-            "--SiftExtraction.first_octave", "-1",        # Start at a higher resolution
-            "--ImageReader.single_camera", "1"            # Assume single camera model for video frames
+            "--SiftExtraction.max_num_features", "8192",
+            "--SiftExtraction.first_octave", "-1",
+            "--ImageReader.single_camera", "1"
         ]
         subprocess.run(cmd, check=True)
         
@@ -511,16 +519,16 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         model_creation_progress["step_name"] = "Feature Matching"
         model_creation_progress["percent_complete"] = 50
         
-        # 2. Sequential matching instead of exhaustive for video frames
+        # 2. Sequential matching for video frames
         print("Running sequential feature matching...")
         cmd = [
             colmap_exe, "sequential_matcher",
             "--database_path", str(database_path),
             "--SiftMatching.use_gpu", "1", 
             "--SiftMatching.gpu_index", "0",
-            "--SiftMatching.max_ratio", "0.8",           # Stricter ratio test
-            "--SequentialMatching.overlap", "10",        # Match with 10 neighboring frames
-            "--SequentialMatching.quadratic_overlap", "1" # Use quadratic overlap for more stability
+            "--SiftMatching.max_ratio", "0.8",
+            "--SequentialMatching.overlap", "10",
+            "--SequentialMatching.quadratic_overlap", "1"
         ]
         subprocess.run(cmd, check=True)
         
@@ -529,26 +537,26 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         model_creation_progress["step_name"] = "3D Reconstruction"
         model_creation_progress["percent_complete"] = 75
         
-        # 3. Mapper with more stable parameters
+        # 3. Incremental mapping
         print("Running incremental mapping...")
         cmd = [
             colmap_exe, "mapper",
             "--database_path", str(database_path),
             "--image_path", str(images_path),
             "--output_path", str(sparse_path),
-            "--Mapper.ba_refine_focal_length", "1",     # Allow focal length refinement
-            "--Mapper.ba_refine_principal_point", "0",  # Fix principal point for stability
-            "--Mapper.ba_refine_extra_params", "0",     # Don't refine extra params
-            "--Mapper.filter_max_reproj_error", "4.0",  # Stricter reprojection error
-            "--Mapper.ba_global_max_refinements", "5",  # More refinements for better results
-            "--Mapper.min_num_matches", "15",           # Require more matches
-            "--Mapper.init_min_num_inliers", "25",      # More inliers for initialization
-            "--Mapper.ba_local_max_num_iterations", "50", # More iterations for local bundle adjustment
-            "--Mapper.ba_global_max_num_iterations", "100" # More iterations for global bundle adjustment
+            "--Mapper.ba_refine_focal_length", "1",
+            "--Mapper.ba_refine_principal_point", "0",
+            "--Mapper.ba_refine_extra_params", "0",
+            "--Mapper.filter_max_reproj_error", "4.0",
+            "--Mapper.ba_global_max_refinements", "5",
+            "--Mapper.min_num_matches", "15",
+            "--Mapper.init_min_num_inliers", "25",
+            "--Mapper.ba_local_max_num_iterations", "50",
+            "--Mapper.ba_global_max_num_iterations", "100"
         ]
         subprocess.run(cmd, check=True)
         
-        # 4. Bundle adjustment as a separate step
+        # 4. Bundle adjustment
         print("Running bundle adjustment to refine the solution...")
         model_folder = list(sparse_path.glob("*"))[0]  # Get the first reconstruction
         cmd = [
@@ -577,25 +585,31 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
             colmap_exe, "model_converter",
             "--input_path", str(model_folder),
             "--output_path", str(model_folder),
-            '--output_type', 'BIN'
+            "--output_type", "BIN"
         ]
         subprocess.run(cmd, check=True)
         
-        # Export to PLY
-        model_path = workspace_dir / "model.ply"
+        # Export to PLY format
+        ply_model_path = workspace_dir / "model.ply"
         cmd = [
             colmap_exe, "model_converter",
             "--input_path", str(model_folder),
-            "--output_path", str(model_path),
-            "--output_type", "OBJ"
+            "--output_path", str(ply_model_path),
+            "--output_type", "PLY"
         ]
         subprocess.run(cmd, check=True)
         
+        # Convert PLY to OBJ using trimesh
+        print("Converting PLY to OBJ...")
+        mesh = trimesh.load(ply_model_path)
+        obj_model_path = ply_model_path.with_suffix(".obj")
+        mesh.export(obj_model_path)
+        
         # Save model to persistent storage
         timestamp = datetime.datetime.now().isoformat()
-        model_file_name = f"model_{timestamp.replace(':', '-')}.ply"
+        model_file_name = f"model_{timestamp.replace(':', '-')}.obj"
         persistent_model_path = Path(MODEL_FOLDER) / model_file_name
-        shutil.copy(model_path, persistent_model_path)
+        shutil.copy(obj_model_path, persistent_model_path)
         
         # Save model metadata to MongoDB
         model_document = {
@@ -627,6 +641,7 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
         model_creation_progress["error"] = str(e)
         print(f"Error in reconstruction: {str(e)}")
         raise e
+
 
 @app.route('/create_model_progress')
 def create_model_progress():
