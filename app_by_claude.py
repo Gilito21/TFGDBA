@@ -7,7 +7,6 @@ import datetime
 import pycolmap
 from pycolmap import (
     SiftExtractionOptions,
-    SiftMatchingOptions,
     CameraMode,
     Device
 )
@@ -412,8 +411,7 @@ def delete_mongo_frames():
         return jsonify({"success": False, "error": str(e)})
 
 def prepare_colmap_workspace():
-    """Prepare the COLMAP workspace by copying frames from MongoDB"""
-    # Create a clean workspace
+    """Prepare the COLMAP workspace by copying frames from MongoDB."""
     workspace_dir = Path(COLMAP_WORKSPACE)
     images_dir = workspace_dir / "images"
     
@@ -439,9 +437,10 @@ def prepare_colmap_workspace():
 
 def run_colmap_reconstruction(workspace_dir: Path):
     """
-    Run a COLMAP reconstruction pipeline with PyColmap 3.11.1-style direct arguments:
+    Run a COLMAP reconstruction pipeline with PyColmap 3.11.1:
+
       1) extract_features(...)
-      2) match_features(...)
+      2) match_exhaustive(...)
       3) incremental_mapping(...)
 
     Returns the path to 'model.ply'.
@@ -458,53 +457,40 @@ def run_colmap_reconstruction(workspace_dir: Path):
         shutil.rmtree(sparse_path)
     sparse_path.mkdir(parents=True, exist_ok=True)
 
-    # Decide on CPU or GPU
-    device = Device.auto
+    # Decide on CPU or GPU automatically
+    device = Device.auto  # or Device.cpu / Device.cuda if you prefer
 
-    # 1) SIFT Extraction
-    #    We'll build a SiftExtractionOptions object and pass it as sift_options
-    #    If your build doesn't support 'estimate_affine_shape' or 'upright',
-    #    comment them out.
-    extraction_opts = SiftExtractionOptions()
-    extraction_opts.estimate_affine_shape = True
-    extraction_opts.upright = False
-    # Domain-size pooling or other fields if available:
-    # extraction_opts.domain_size_pooling = True
+    # 1) FEATURE EXTRACTION
+    # Build a SiftExtractionOptions object if you want custom extraction settings
+    sift_extraction_opts = SiftExtractionOptions()
+    # If your build supports these fields:
+    sift_extraction_opts.estimate_affine_shape = True
+    sift_extraction_opts.upright = False
+    # sift_extraction_opts.domain_size_pooling = True  # if supported
 
     print("Running feature extraction...")
     pycolmap.extract_features(
         database_path=str(database_path),
         image_path=str(images_path),
-        camera_mode=CameraMode.AUTO,       # or CameraMode.SINGLE, etc.
-        sift_options=extraction_opts,      # pass the SiftExtractionOptions object
+        camera_mode=CameraMode.AUTO,  # or CameraMode.SINGLE
+        sift_options=sift_extraction_opts,
         device=device
     )
 
-    # 2) SIFT Matching
-    #    We pass a SiftMatchingOptions object for match_features(..., sift_options=..., device=...).
-    matching_opts = SiftMatchingOptions()
-    matching_opts.cross_check = False
-    matching_opts.max_num_matches = 32768
-    # If your version supports domain_size_pooling or guided_matching, set them here.
-    # matching_opts.guided_matching = True
-
-    print("Running feature matching...")
-    pycolmap.match_features(
+    # 2) EXHAUSTIVE MATCHING
+    # In PyColmap 3.11.1, you can call match_exhaustive(...) after features are extracted.
+    print("Running exhaustive feature matching...")
+    pycolmap.match_exhaustive(
         database_path=str(database_path),
-        sift_options=matching_opts,
-        device=device
+        # there's no 'device' arg or SiftMatchingOptions in this approach
     )
 
-    # 3) Incremental mapping
-    #    In older PyColmap, you typically pass SiftMatchingOptions again or rely on defaults.
-    #    There's no direct dictionary or 'MapperOptions' if your build doesn't have them.
+    # 3) INCREMENTAL MAPPING
     print("Running incremental mapping...")
     reconstructions = pycolmap.incremental_mapping(
         database_path=str(database_path),
         image_path=str(images_path),
         output_path=str(sparse_path),
-        # Optionally pass the same matching_opts if your build supports it
-        # sift_options=matching_opts,
         device=device
     )
 
@@ -512,7 +498,7 @@ def run_colmap_reconstruction(workspace_dir: Path):
     if len(reconstructions) == 0:
         raise RuntimeError("No reconstruction could be created from the provided frames.")
 
-    # Export the largest reconstruction to PLY
+    # Pick the largest reconstruction and export to PLY
     largest_model = max(reconstructions, key=lambda rc: len(rc.images))
     largest_model.export_PLY(str(model_path))
     print(f"Exported model to {model_path}")
