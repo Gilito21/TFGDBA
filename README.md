@@ -50,7 +50,7 @@ python app.py
 
 **Server:** Python / Flask / OpenCV / COLMAP / Lambda Cloud GPU
 
-**DataBase:** MongoDB & GridFS
+**DataBase:** MongoDB
 
 
 ## Authors
