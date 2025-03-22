@@ -213,7 +213,7 @@ RUN apt-get update && apt-get install -y \\
 WORKDIR /opt
 RUN git clone https://github.com/colmap/colmap.git && \\
     cd colmap && \\
-    git checkout dev && \\
+    git checkout main && \\
     mkdir build && \\
     cd build && \\
     echo "Building COLMAP with CUDA architecture: \${CUDA_ARCH}" && \\
