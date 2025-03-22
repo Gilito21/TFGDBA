@@ -1207,6 +1207,7 @@ def view_model_3d(filename):
     
     return render_template_string('''
     <!doctype html>
+    <!doctype html>
     <html>
     <head>
         <title>3D Model Viewer</title>
@@ -1304,6 +1305,12 @@ def view_model_3d(filename):
             .back-button:hover {
                 background: #3182ce;
             }
+            .download-btn {
+                background: #48bb78;
+            }
+            .download-btn:hover {
+                background: #38a169;
+            }
         </style>
     </head>
     <body>
@@ -1318,6 +1325,7 @@ def view_model_3d(filename):
             <button id="rotateX">Flip X</button>
             <button id="rotateY">Flip Y</button>
             <button id="rotateZ">Flip Z</button>
+            <button id="download" class="download-btn">Download Model</button>
             <button id="fullscreen">Fullscreen</button>
             <button id="debug">Toggle Debug</button>
         </div>
@@ -1729,6 +1737,30 @@ def view_model_3d(filename):
                 
                 debug.info("Flipping model on Z axis");
                 modelGroup.rotation.z += Math.PI; // Rotate 180 degrees
+            });
+            
+            // Add download functionality
+            document.getElementById('download').addEventListener('click', function() {
+                if (!modelFilename) {
+                    debug.warn("Download clicked but no model filename is available");
+                    return;
+                }
+                
+                debug.info("Initiating model download");
+                
+                // Create a temporary anchor element
+                const downloadLink = document.createElement('a');
+                downloadLink.href = '/model/' + modelFilename;
+                downloadLink.download = modelFilename; // Specify the filename for the download
+                
+                // Add the link to the document temporarily
+                document.body.appendChild(downloadLink);
+                
+                // Programmatically click the link to start download
+                downloadLink.click();
+                
+                // Clean up - remove the link
+                document.body.removeChild(downloadLink);
             });
 
             // Handle fullscreen
