@@ -1,10 +1,9 @@
 <div align="center">
 
-# 🌟 TFGDBA 🌟
+#  TFGDBA Video to 3D Model 
 
 ### *Transform Videos into Stunning 3D Models*
 
-<img src="https://raw.githubusercontent.com/gilito21/TFGDBA/main/assets/banner.png" alt="TFGDBA Banner" width="800"/>
 
 [![Last Commit](https://img.shields.io/github/last-commit/gilito21/TFGDBA?style=for-the-badge)](https://github.com/gilito21/TFGDBA/commits)
 [![Docker Pulls](https://img.shields.io/docker/pulls/tiogilito21/tfgdba-app?style=for-the-badge&logo=docker&logoColor=white&color=2496ED)](https://hub.docker.com/r/tiogilito21/tfgdba-app)
