@@ -172,7 +172,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 <div align="center">
    - Juan Pelaez
 <a href="https://github.com/gilito21/TFGDBA/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=gilito21/TFGDBA" />
+  <img src="https://contrib.rocks/image?repo=gilito21" />
 </a>
 </div>
 
