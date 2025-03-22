@@ -89,9 +89,30 @@ echo "=== Installing Docker and NVIDIA Container Toolkit ==="
 if ! command -v docker &> /dev/null; then
     echo "Installing Docker..."
     $USE_SUDO apt-get update
-    $USE_SUDO apt-get install -y docker.io docker-compose
+    $USE_SUDO apt-get install -y docker.io
 else
     echo "Docker already installed."
+fi
+
+# Install Docker Compose correctly
+echo "=== Installing Docker Compose ==="
+if ! command -v docker-compose &> /dev/null; then
+    echo "Installing Docker Compose..."
+    # Download the Docker Compose binary directly
+    COMPOSE_VERSION=v2.18.1
+    $USE_SUDO curl -L "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    $USE_SUDO chmod +x /usr/local/bin/docker-compose
+    $USE_SUDO ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+    
+    # Verify docker-compose is working
+    docker-compose --version || {
+      echo "Docker Compose installation failed. Trying alternative method..."
+      # Try alternative installation with pip (fallback)
+      $USE_SUDO apt-get install -y python3-pip
+      $USE_SUDO pip3 install docker-compose
+    }
+else
+    echo "Docker Compose already installed."
 fi
 
 if ! dpkg -l | grep -q nvidia-container-toolkit; then
@@ -323,28 +344,38 @@ ENV/
 Thumbs.db
 EOF
 
+# Function to run docker-compose commands with fallback to docker compose (newer syntax)
+docker_compose() {
+    if command -v docker-compose &> /dev/null; then
+        $USE_SUDO docker-compose "$@"
+    else
+        echo "docker-compose not found, trying 'docker compose' command..."
+        $USE_SUDO docker compose "$@"
+    fi
+}
+
 # Build the Docker container
 echo "=== Building Docker container ==="
 echo "This may take a while..."
-$USE_SUDO docker-compose build
+docker_compose build
 
 # Run the Docker container
 echo "=== Starting Docker container ==="
-$USE_SUDO docker-compose up -d
+docker_compose up -d
 
 # Show logs
 echo "=== Container logs ==="
-$USE_SUDO docker-compose logs
+docker_compose logs
 
 echo "=== Setup complete ==="
 echo "Your Docker container is now running."
 echo "Access the web application at http://localhost:5000"
 echo ""
 echo "You can check the logs with:"
-echo "  sudo docker-compose logs -f"
+echo "  sudo docker-compose logs -f  (or 'sudo docker compose logs -f' if using newer Docker)"
 echo ""
 echo "To stop the container:"
-echo "  sudo docker-compose down"
+echo "  sudo docker-compose down  (or 'sudo docker compose down' if using newer Docker)"
 echo ""
 echo "COLMAP is available at the path /opt/colmap/build/src/colmap/exe inside the container"
 echo "and has been added to the PATH environment variable."
