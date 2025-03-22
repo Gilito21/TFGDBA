@@ -24,9 +24,9 @@ echo "Cleaning up any existing containers..."
 sudo docker stop tfgdba-instance 2>/dev/null || true
 sudo docker rm tfgdba-instance 2>/dev/null || true
 
-# Run the container in detached mode
+# Run the container with a modified entrypoint 
 echo "Starting the application in detached mode..."
-sudo docker run -d --gpus all -p 5000:5000 --name tfgdba-instance tiogilito21/tfgdba-app:latest
+sudo docker run -d --gpus all -p 0.0.0.0:5000:5000 --name tfgdba-instance --entrypoint "/bin/bash" tiogilito21/tfgdba-app:latest -c "cd /app/TFGDBA && python3 app.py"
 
 # Wait for container to initialize
 echo "Waiting for the application to initialize..."
