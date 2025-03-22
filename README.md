@@ -163,24 +163,6 @@ Intuitive interface for uploading videos and viewing models
 </tr>
 </table>
 
-## 📈 Usage Examples
-
-```javascript
-// Example of how to load a model with Three.js
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-
-const scene = new THREE.Scene();
-const loader = new GLTFLoader();
-
-loader.load(
-  'path/to/your/model.glb',
-  function (gltf) {
-    scene.add(gltf.scene);
-  }
-);
-```
-
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
@@ -204,5 +186,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 <div align="center">
-<p>Made with ❤️ by <a href="https://github.com/gilito21">Gilito21</a></p>
 </div>
