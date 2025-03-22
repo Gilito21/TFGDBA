@@ -179,7 +179,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🌟 Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=gilito21/TFGDBA&type=Date)](https://star-history.com/#gilito21/TFGDBA&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=gilito21/TFGDBA&type=Timeline)](https://star-history.com/#gilito21/TFGDBA&Timeline)
 
 </div>
 
