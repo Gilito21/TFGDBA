@@ -1315,6 +1315,9 @@ def view_model_3d(filename):
             <button id="wireframe">Toggle Wireframe</button>
             <button id="rotate">Pause Rotation</button>
             <button id="resetView">Reset View</button>
+            <button id="rotateX">Flip X</button>
+            <button id="rotateY">Flip Y</button>
+            <button id="rotateZ">Flip Z</button>
             <button id="fullscreen">Fullscreen</button>
             <button id="debug">Toggle Debug</button>
         </div>
@@ -1573,6 +1576,13 @@ def view_model_3d(filename):
                                     const center = bbox.getCenter(new THREE.Vector3());
                                     const size = bbox.getSize(new THREE.Vector3());
                                     
+                                    // Auto-fix orientation for vehicle models - attempt to put wheels down
+                                    // For COLMAP reconstructions of cars, often a 180° rotation around X is needed
+                                    if (size.y < size.z) {
+                                        debug.info("Auto-fixing model orientation - appears to be a vehicle");
+                                        modelGroup.rotation.x = Math.PI; // This often fixes car orientations
+                                    }
+                                    
                                     debug.info(`Model dimensions: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`);
                                     debug.info(`Model center: ${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}`);
                                     
@@ -1688,6 +1698,37 @@ def view_model_3d(filename):
                         controls.update();
                     }
                 });
+            });
+            
+            // Add rotation controls for different axes
+            document.getElementById('rotateX').addEventListener('click', function() {
+                if (!model) {
+                    debug.warn("Rotate X clicked but no model is loaded");
+                    return;
+                }
+                
+                debug.info("Flipping model on X axis");
+                modelGroup.rotation.x += Math.PI; // Rotate 180 degrees
+            });
+            
+            document.getElementById('rotateY').addEventListener('click', function() {
+                if (!model) {
+                    debug.warn("Rotate Y clicked but no model is loaded");
+                    return;
+                }
+                
+                debug.info("Flipping model on Y axis");
+                modelGroup.rotation.y += Math.PI; // Rotate 180 degrees
+            });
+            
+            document.getElementById('rotateZ').addEventListener('click', function() {
+                if (!model) {
+                    debug.warn("Rotate Z clicked but no model is loaded");
+                    return;
+                }
+                
+                debug.info("Flipping model on Z axis");
+                modelGroup.rotation.z += Math.PI; // Rotate 180 degrees
             });
 
             // Handle fullscreen
