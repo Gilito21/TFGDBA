@@ -24,9 +24,19 @@ echo "Cleaning up any existing containers..."
 sudo docker stop tfgdba-instance 2>/dev/null || true
 sudo docker rm tfgdba-instance 2>/dev/null || true
 
-# Run the container with a modified entrypoint 
+# Check architecture
+ARCH=$(uname -m)
+echo "Detected host architecture: $ARCH"
+
+# Run the container
 echo "Starting the application in detached mode..."
-sudo docker run -d --gpus all -p 0.0.0.0:5000:5000 --name tfgdba-instance --entrypoint "/bin/bash" tiogilito21/tfgdba-app:latest -c "cd /app/TFGDBA && python3 app.py"
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+  echo "Running on ARM architecture, using platform emulation..."
+  sudo docker run -d --platform linux/amd64 --gpus all -p 0.0.0.0:5000:5000 --name tfgdba-instance --entrypoint "/bin/bash" tiogilito21/tfgdba-app:latest -c "cd /app/TFGDBA && python3 app.py"
+else
+  echo "Running on AMD64 architecture..."
+  sudo docker run -d --gpus all -p 0.0.0.0:5000:5000 --name tfgdba-instance --entrypoint "/bin/bash" tiogilito21/tfgdba-app:latest -c "cd /app/TFGDBA && python3 app.py"
+fi
 
 # Wait for container to initialize
 echo "Waiting for the application to initialize..."
