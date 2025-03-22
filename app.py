@@ -1196,7 +1196,7 @@ def insert_model_to_mongodb(model_name, model_data, viz_data, frame_count, point
 
 @app.route('/model_view/<filename>')
 def view_model_3d(filename):
-    """View a 3D model using Three.js"""
+    """View a 3D model using Three.js with enhanced debugging"""
     model_data = models_collection.find_one({"name": filename})
     
     if not model_data:
@@ -1271,6 +1271,21 @@ def view_model_3d(filename):
                 font-size: 18px;
                 z-index: 200;
             }
+            .debug-panel {
+                position: absolute;
+                bottom: 80px;
+                left: 20px;
+                background: rgba(0,0,0,0.7);
+                color: white;
+                padding: 15px;
+                border-radius: 10px;
+                max-width: 500px;
+                max-height: 200px;
+                overflow-y: auto;
+                font-size: 12px;
+                font-family: monospace;
+                z-index: 100;
+            }
             .back-button {
                 position: absolute;
                 top: 20px;
@@ -1301,6 +1316,7 @@ def view_model_3d(filename):
             <button id="rotate">Pause Rotation</button>
             <button id="resetView">Reset View</button>
             <button id="fullscreen">Fullscreen</button>
+            <button id="debug">Toggle Debug</button>
         </div>
         
         <div class="info-panel">
@@ -1308,6 +1324,11 @@ def view_model_3d(filename):
             <p><strong>Name:</strong> <span id="modelName"></span></p>
             <p><strong>Points:</strong> <span id="pointCount"></span></p>
             <p><strong>Created:</strong> <span id="createdDate"></span></p>
+        </div>
+        
+        <div id="debug-panel" class="debug-panel" style="display: none;">
+            <h4 style="margin-top: 0;">Debug Log</h4>
+            <div id="debug-log"></div>
         </div>
 
         <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -1318,9 +1339,40 @@ def view_model_3d(filename):
         <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/loaders/PLYLoader.js"></script>
 
         <script>
+            // Debug logging functions
+            const debug = {
+                log: function(message) {
+                    console.log(message);
+                    this.addToLog('[LOG] ' + message);
+                },
+                error: function(message) {
+                    console.error(message);
+                    this.addToLog('[ERROR] ' + message);
+                },
+                warn: function(message) {
+                    console.warn(message);
+                    this.addToLog('[WARN] ' + message);
+                },
+                info: function(message) {
+                    console.info(message);
+                    this.addToLog('[INFO] ' + message);
+                },
+                addToLog: function(message) {
+                    const logElement = document.getElementById('debug-log');
+                    const entry = document.createElement('div');
+                    entry.textContent = message;
+                    logElement.appendChild(entry);
+                    logElement.scrollTop = logElement.scrollHeight;
+                }
+            };
+
             // Get the model filename from the URL
             const modelFilename = '{{ model_name }}';
+            debug.info(`Model filename: ${modelFilename}`);
+            
             const modelType = modelFilename.split('.').pop().toLowerCase();
+            debug.info(`Model type: ${modelType}`);
+            
             let isRotating = true;
             
             // Update model info
@@ -1328,6 +1380,21 @@ def view_model_3d(filename):
             document.getElementById('pointCount').textContent = '{{ point_count }}';
             document.getElementById('createdDate').textContent = '{{ created_at }}';
 
+            // Initialize renderer first to check for WebGL support
+            let renderer;
+            try {
+                debug.info("Initializing WebGL renderer");
+                renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setPixelRatio(window.devicePixelRatio);
+                document.getElementById('container').appendChild(renderer.domElement);
+            } catch (e) {
+                debug.error(`WebGL renderer initialization failed: ${e.message}`);
+                document.getElementById('loading').textContent = 'Error: WebGL not supported by your browser';
+                throw e;
+            }
+
+            debug.info("Setting up scene");
             // Set up scene
             const scene = new THREE.Scene();
             scene.background = new THREE.Color(0x111111);
@@ -1335,12 +1402,6 @@ def view_model_3d(filename):
             // Set up camera
             const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.position.z = 5;
-
-            // Set up renderer
-            const renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            document.getElementById('container').appendChild(renderer.domElement);
 
             // Set up lighting
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
@@ -1355,9 +1416,17 @@ def view_model_3d(filename):
             scene.add(directionalLight2);
 
             // Add orbit controls
-            const controls = new THREE.OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
-            controls.dampingFactor = 0.05;
+            let controls;
+            try {
+                debug.info("Initializing OrbitControls");
+                controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.dampingFactor = 0.05;
+            } catch (e) {
+                debug.error(`OrbitControls initialization failed: ${e.message}`);
+                document.getElementById('loading').textContent = 'Error: Could not initialize controls';
+                throw e;
+            }
 
             // Create a group to hold the model
             const modelGroup = new THREE.Group();
@@ -1367,104 +1436,178 @@ def view_model_3d(filename):
             let loader;
             
             if (modelType === 'obj') {
-                loader = new THREE.OBJLoader();
+                try {
+                    debug.info("Creating OBJLoader");
+                    loader = new THREE.OBJLoader();
+                } catch (e) {
+                    debug.error(`OBJLoader initialization failed: ${e.message}`);
+                    document.getElementById('loading').textContent = 'Error: Could not initialize OBJ loader';
+                    throw e;
+                }
             } else if (modelType === 'ply') {
-                loader = new THREE.PLYLoader();
+                try {
+                    debug.info("Creating PLYLoader");
+                    loader = new THREE.PLYLoader();
+                } catch (e) {
+                    debug.error(`PLYLoader initialization failed: ${e.message}`);
+                    document.getElementById('loading').textContent = 'Error: Could not initialize PLY loader';
+                    throw e;
+                }
             } else {
-                alert('Unsupported file format');
-                document.getElementById('loading').textContent = 'Unsupported file format: ' + modelType;
-                document.getElementById('loading').style.display = 'block';
+                const errorMsg = `Unsupported file format: ${modelType}`;
+                debug.error(errorMsg);
+                document.getElementById('loading').textContent = errorMsg;
+                throw new Error(errorMsg);
             }
 
             let model;
-
-            // Load the model
-            if (loader) {
-                loader.load(
-                    // Resource URL
-                    '/model/' + modelFilename,
-                    
-                    // onLoad callback
-                    function (loadedModel) {
-                        if (modelType === 'obj') {
-                            model = loadedModel;
-                            
-                            // Set material for all children
-                            model.traverse(function (child) {
-                                if (child.isMesh) {
-                                    child.material = new THREE.MeshPhongMaterial({
-                                        color: 0x4299e1,
-                                        specular: 0x111111,
-                                        shininess: 30,
-                                        flatShading: true
-                                    });
-                                }
-                            });
-                        } else if (modelType === 'ply') {
-                            // Create mesh from geometry
-                            const material = new THREE.MeshPhongMaterial({
-                                color: 0x4299e1,
-                                specular: 0x111111,
-                                shininess: 30,
-                                flatShading: true,
-                                vertexColors: true
-                            });
-                            
-                            model = new THREE.Mesh(loadedModel, material);
-                        }
-                        
-                        // Center the model
-                        const bbox = new THREE.Box3().setFromObject(model);
-                        const center = bbox.getCenter(new THREE.Vector3());
-                        const size = bbox.getSize(new THREE.Vector3());
-                        
-                        // Position camera based on model size
-                        const maxDim = Math.max(size.x, size.y, size.z);
-                        const fov = camera.fov * (Math.PI / 180);
-                        let cameraDistance = maxDim / (2 * Math.tan(fov / 2));
-                        
-                        // Add a little extra distance
-                        cameraDistance *= 1.5;
-                        camera.position.z = cameraDistance;
-                        
-                        // Reset controls
-                        controls.target.set(center.x, center.y, center.z);
-                        controls.update();
-                        
-                        // Center the model
-                        model.position.x = -center.x;
-                        model.position.y = -center.y;
-                        model.position.z = -center.z;
-                        
-                        modelGroup.add(model);
-                        
-                        // Hide loading indicator
-                        document.getElementById('loading').style.display = 'none';
-                    },
-                    
-                    // onProgress callback
-                    function (xhr) {
-                        const percentComplete = Math.round((xhr.loaded / xhr.total) * 100);
-                        document.getElementById('loading').textContent = 'Loading model... ' + percentComplete + '%';
-                    },
-                    
-                    // onError callback
-                    function (error) {
-                        console.error('Error loading model:', error);
-                        document.getElementById('loading').textContent = 'Error loading model: ' + error.message;
+            let modelURL = '/model/' + modelFilename;
+            debug.info(`Model URL: ${modelURL}`);
+            
+            // Test model URL before trying to load it
+            fetch(modelURL, { method: 'HEAD' })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Server returned ${response.status}: ${response.statusText}`);
                     }
-                );
-            }
+                    debug.info(`Model file exists. Status: ${response.status}`);
+                    debug.info("Beginning model loading");
+                    return true;
+                })
+                .catch(error => {
+                    const errorMsg = `Model file not accessible: ${error.message}`;
+                    debug.error(errorMsg);
+                    document.getElementById('loading').textContent = errorMsg;
+                    throw error;
+                })
+                .then(() => {
+                    // Load the model if file exists
+                    if (loader) {
+                        loader.load(
+                            // Resource URL
+                            modelURL,
+                            
+                            // onLoad callback
+                            function(loadedModel) {
+                                debug.info("Model loaded successfully");
+                                try {
+                                    if (modelType === 'obj') {
+                                        model = loadedModel;
+                                        
+                                        debug.info("Processing OBJ model");
+                                        let meshCount = 0;
+                                        
+                                        // Set material for all children
+                                        model.traverse(function(child) {
+                                            if (child.isMesh) {
+                                                meshCount++;
+                                                debug.info(`Processing mesh: ${child.name || 'unnamed'}`);
+                                                child.material = new THREE.MeshPhongMaterial({
+                                                    color: 0x4299e1,
+                                                    specular: 0x111111,
+                                                    shininess: 30,
+                                                    flatShading: true
+                                                });
+                                            }
+                                        });
+                                        
+                                        debug.info(`Processed ${meshCount} meshes in OBJ model`);
+                                        
+                                        if (meshCount === 0) {
+                                            debug.warn("No meshes found in OBJ model");
+                                        }
+                                        
+                                    } else if (modelType === 'ply') {
+                                        debug.info("Processing PLY model");
+                                        // Create mesh from geometry
+                                        const material = new THREE.MeshPhongMaterial({
+                                            color: 0x4299e1,
+                                            specular: 0x111111,
+                                            shininess: 30,
+                                            flatShading: true,
+                                            vertexColors: true
+                                        });
+                                        
+                                        debug.info(`PLY vertices: ${loadedModel.attributes.position.count}`);
+                                        model = new THREE.Mesh(loadedModel, material);
+                                    }
+                                    
+                                    // Center the model
+                                    debug.info("Calculating model bounding box");
+                                    const bbox = new THREE.Box3().setFromObject(model);
+                                    const center = bbox.getCenter(new THREE.Vector3());
+                                    const size = bbox.getSize(new THREE.Vector3());
+                                    
+                                    debug.info(`Model dimensions: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`);
+                                    debug.info(`Model center: ${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}`);
+                                    
+                                    // Position camera based on model size
+                                    const maxDim = Math.max(size.x, size.y, size.z);
+                                    const fov = camera.fov * (Math.PI / 180);
+                                    let cameraDistance = maxDim / (2 * Math.tan(fov / 2));
+                                    
+                                    // Add a little extra distance
+                                    cameraDistance *= 1.5;
+                                    debug.info(`Setting camera distance to ${cameraDistance.toFixed(2)}`);
+                                    camera.position.z = cameraDistance;
+                                    
+                                    // Reset controls
+                                    controls.target.set(center.x, center.y, center.z);
+                                    controls.update();
+                                    
+                                    // Center the model
+                                    model.position.x = -center.x;
+                                    model.position.y = -center.y;
+                                    model.position.z = -center.z;
+                                    
+                                    debug.info("Adding model to scene");
+                                    modelGroup.add(model);
+                                    
+                                    // Hide loading indicator
+                                    document.getElementById('loading').style.display = 'none';
+                                    debug.info("Model successfully displayed");
+                                } catch (e) {
+                                    debug.error(`Error processing model: ${e.message}`);
+                                    document.getElementById('loading').textContent = `Error processing model: ${e.message}`;
+                                }
+                            },
+                            
+                            // onProgress callback
+                            function(xhr) {
+                                if (xhr.lengthComputable) {
+                                    const percentComplete = Math.round((xhr.loaded / xhr.total) * 100);
+                                    debug.info(`Loading progress: ${percentComplete}% (${(xhr.loaded / 1024).toFixed(2)} KB / ${(xhr.total / 1024).toFixed(2)} KB)`);
+                                    document.getElementById('loading').textContent = `Loading model... ${percentComplete}%`;
+                                } else {
+                                    const loadedKB = (xhr.loaded / 1024).toFixed(2);
+                                    debug.info(`Loading progress: ${loadedKB} KB (total size unknown)`);
+                                    document.getElementById('loading').textContent = `Loading model... ${loadedKB} KB`;
+                                }
+                            },
+                            
+                            // onError callback
+                            function(error) {
+                                const errorMsg = `Error loading model: ${error.message || 'Unknown error'}`;
+                                debug.error(errorMsg);
+                                document.getElementById('loading').textContent = errorMsg;
+                            }
+                        );
+                    }
+                });
 
             // Handle wireframe toggle
             let wireframeEnabled = false;
             document.getElementById('wireframe').addEventListener('click', function() {
-                if (!model) return;
+                if (!model) {
+                    debug.warn("Wireframe toggle clicked but no model is loaded");
+                    return;
+                }
                 
                 wireframeEnabled = !wireframeEnabled;
+                debug.info(`Setting wireframe mode: ${wireframeEnabled}`);
                 
                 if (modelType === 'obj') {
-                    model.traverse(function (child) {
+                    model.traverse(function(child) {
                         if (child.isMesh) {
                             child.material.wireframe = wireframeEnabled;
                         }
@@ -1478,11 +1621,17 @@ def view_model_3d(filename):
             document.getElementById('rotate').addEventListener('click', function() {
                 isRotating = !isRotating;
                 this.textContent = isRotating ? 'Pause Rotation' : 'Resume Rotation';
+                debug.info(`Model rotation: ${isRotating ? 'enabled' : 'disabled'}`);
             });
 
             // Handle reset view
             document.getElementById('resetView').addEventListener('click', function() {
-                if (!model) return;
+                if (!model) {
+                    debug.warn("Reset view clicked but no model is loaded");
+                    return;
+                }
+                
+                debug.info("Resetting camera view");
                 
                 // Animate camera position reset
                 gsap.to(camera.position, {
@@ -1509,12 +1658,24 @@ def view_model_3d(filename):
             // Handle fullscreen
             document.getElementById('fullscreen').addEventListener('click', function() {
                 if (!document.fullscreenElement) {
-                    document.documentElement.requestFullscreen();
+                    debug.info("Entering fullscreen mode");
+                    document.documentElement.requestFullscreen().catch(e => {
+                        debug.error(`Fullscreen error: ${e.message}`);
+                    });
                 } else {
                     if (document.exitFullscreen) {
+                        debug.info("Exiting fullscreen mode");
                         document.exitFullscreen();
                     }
                 }
+            });
+            
+            // Toggle debug panel
+            document.getElementById('debug').addEventListener('click', function() {
+                const debugPanel = document.getElementById('debug-panel');
+                const isVisible = debugPanel.style.display !== 'none';
+                debugPanel.style.display = isVisible ? 'none' : 'block';
+                debug.info(`Debug panel: ${isVisible ? 'hidden' : 'visible'}`);
             });
 
             // Handle window resize
@@ -1522,6 +1683,7 @@ def view_model_3d(filename):
                 camera.aspect = window.innerWidth / window.innerHeight;
                 camera.updateProjectionMatrix();
                 renderer.setSize(window.innerWidth, window.innerHeight);
+                debug.info(`Window resized: ${window.innerWidth}x${window.innerHeight}`);
             });
 
             // Animation loop
@@ -1537,7 +1699,31 @@ def view_model_3d(filename):
                 renderer.render(scene, camera);
             }
 
+            debug.info("Starting animation loop");
             animate();
+            
+            // Add additional error handling for THREE.js
+            window.addEventListener('error', function(event) {
+                debug.error(`Global error: ${event.message} at ${event.filename}:${event.lineno}`);
+                document.getElementById('loading').textContent = `Error: ${event.message}`;
+            });
+            
+            // Log WebGL capabilities
+            try {
+                const gl = renderer.getContext();
+                const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                if (debugInfo) {
+                    const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                    const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                    debug.info(`WebGL Vendor: ${vendor}`);
+                    debug.info(`WebGL Renderer: ${renderer}`);
+                }
+                debug.info(`WebGL Version: ${gl.getParameter(gl.VERSION)}`);
+                debug.info(`WebGL Shading Language Version: ${gl.getParameter(gl.SHADING_LANGUAGE_VERSION)}`);
+                debug.info(`WebGL Max Texture Size: ${gl.getParameter(gl.MAX_TEXTURE_SIZE)}`);
+            } catch (e) {
+                debug.warn(`Unable to query WebGL info: ${e.message}`);
+            }
         </script>
     </body>
     </html>
