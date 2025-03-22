@@ -480,8 +480,22 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
             shutil.rmtree(sparse_path)
         sparse_path.mkdir(parents=True, exist_ok=True)
         
-        # Path to your custom COLMAP build
-        colmap_exe = "/home/ubuntu/TFGDBA/colmap/build/src/colmap/exe/colmap"
+        possible_paths = [
+            "/home/ubuntu/TFGDBA/colmap/build/src/colmap/exe/colmap",
+            "/home/ubuntu/colmap/build/src/colmap/exe/colmap"
+        ]
+        
+        colmap_exe = None
+        for path in possible_paths:
+            if os.path.isfile(path):
+                colmap_exe = path
+                break
+        
+        if colmap_exe is None:
+            raise FileNotFoundError("Could not find the colmap executable in any known path.")
+        
+        print(f"Using COLMAP at: {colmap_exe}")
+
         
         # Initialize progress
         model_creation_progress["current_step"] = 1
