@@ -1,51 +1,89 @@
-# Use an Ubuntu base image with CUDA support.
-FROM nvidia/cuda:11.2.2-cudnn8-runtime-ubuntu20.04
+FROM ubuntu:22.04
 
-# Avoid interactive prompts during package installation.
+# Set noninteractive installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies: Python3, pip, virtualenv, build tools, OpenCV dependencies, etc.
+# Accept CUDA architecture as build argument
+ARG CUDA_ARCH=86
+ENV CUDA_ARCH=${CUDA_ARCH}
+
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
     git \
-    build-essential \
     cmake \
-    libopencv-dev \
+    ninja-build \
+    build-essential \
+    libboost-program-options-dev \
+    libboost-filesystem-dev \
+    libboost-graph-dev \
+    libboost-system-dev \
+    libeigen3-dev \
+    libsuitesparse-dev \
+    libfreeimage-dev \
+    libgoogle-glog-dev \
+    libgflags-dev \
+    libglew-dev \
+    qtbase5-dev \
+    libqt5opengl5-dev \
+    libcgal-dev \
+    libcgal-qt5-dev \
+    libatlas-base-dev \
+    libsuitesparse-dev \
+    libceres-dev \
+    libflann-dev \  # Added FLANN dependency
+    python3-pip \
+    python3-dev \
+    python3-opencv \
+    ffmpeg \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    libavutil-dev \
+    wget \
+    unzip \
+    curl \
+    nvidia-cuda-toolkit \
+    nvidia-cuda-toolkit-gcc \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory.
-WORKDIR /app
-
-# Copy your project code into the container.
-# This assumes that you've already cloned your repository locally.
-COPY . /app
-
-# Create and activate a virtual environment, upgrade pip, and install Python dependencies.
-RUN python3 -m venv venv && \
-    . venv/bin/activate && \
-    pip install --upgrade pip && \
-    pip install -r requirements.txt
-
-# (Optional) If COLMAP isnt installed on the host and you want to build it in the container,
-
+# Install COLMAP from source with the specified architecture
+WORKDIR /opt
 RUN git clone https://github.com/colmap/colmap.git && \
     cd colmap && \
-    mkdir build && cd build && \
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_CUDA=ON -DCUDA_ARCH_BIN="86" && \
-    make -j$(nproc) && \
-    cp ./src/colmap/exe/colmap /usr/local/bin/
+    git checkout main && \
+    mkdir build && \
+    cd build && \
+    echo "Building COLMAP with CUDA architecture: ${CUDA_ARCH}" && \
+    cmake .. -GNinja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_CUDA_COMPILER=/usr/bin/nvcc \
+      -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} && \
+    ninja && \
+    ninja install
 
-# Set environment variable for COLMAP path if needed by your app.
-# For example, if you built COLMAP above:
-ENV COLMAP_PATH="/usr/local/bin/colmap"
+# Add COLMAP to PATH
+ENV PATH="/opt/colmap/build/src/colmap/exe:${PATH}"
 
-# Expose the port your application listens on (adjust as necessary).
+# Create app directory
+WORKDIR /app
+
+# Create necessary directories
+RUN mkdir -p /app/uploads /app/frames /app/models /app/colmap_workspace
+
+# Copy requirements file
+COPY requirements.txt /app/
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . /app/
+
+# Expose the port
 EXPOSE 5000
 
-# Ensure that the container uses the virtual environment's Python.
-ENV PATH="/app/venv/bin:$PATH"
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV FLASK_APP=app.py
 
-# Define the command to run your app.
-CMD ["python", "app.py"]
+# Run the application
+CMD ["python3", "app.py"]
