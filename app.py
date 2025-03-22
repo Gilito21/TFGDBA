@@ -166,6 +166,18 @@ def upload_form():
                 <a href="/models"><button class="model-btn">View 3D Models</button></a>
             </div>
         </div>
+        <div class="container" style="margin-top: 30px;">
+            <h2>Upload OBJ Files Directly</h2>
+            <p class="description">Already have 3D models? Upload OBJ files directly to your collection.</p>
+            
+            <form action="/upload_obj" method="post" enctype="multipart/form-data">
+                <div class="options">
+                    <input type="file" name="obj_file" accept=".obj" required><br>
+                    <input type="text" name="model_name" placeholder="Model name (optional)" style="padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0; margin: 10px 0; width: 200px;">
+                </div>
+                <input type="submit" value="Upload OBJ File" style="background: #48bb78;">
+            </form>
+        </div>
     </body>
     </html>
     ''', gpu_available=USE_GPU)
@@ -176,7 +188,114 @@ def get_model_progress():
     global model_creation_progress
     return jsonify(model_creation_progress)
 
-
+@app.route('/upload_obj', methods=['POST'])
+def upload_obj_file():
+    if 'obj_file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+    
+    obj_file = request.files['obj_file']
+    if obj_file.filename == '':
+        return jsonify({"error": "No selected file. Please upload an OBJ file."}), 400
+    
+    if not obj_file.filename.lower().endswith('.obj'):
+        return jsonify({"error": "File must be an OBJ file"}), 400
+    
+    try:
+        # Get custom model name if provided, otherwise use the original filename
+        model_name = request.form.get('model_name', '').strip()
+        if not model_name:
+            model_name = obj_file.filename
+        
+        # Ensure model_name ends with .obj
+        if not model_name.lower().endswith('.obj'):
+            model_name += '.obj'
+        
+        # Create timestamp for the model
+        timestamp = datetime.datetime.now()
+        
+        # Generate unique filename if not already unique
+        unique_filename = f"model_{timestamp.isoformat().replace(':', '-')}.obj"
+        
+        # Save file to MODEL_FOLDER
+        obj_path = os.path.join(MODEL_FOLDER, unique_filename)
+        obj_file.save(obj_path)
+        
+        # Read obj file content
+        with open(obj_path, 'rb') as f:
+            obj_data = f.read()
+        
+        # Count vertices in the OBJ file
+        point_count = 0
+        with open(obj_path, 'r') as f:
+            for line in f:
+                if line.startswith('v '):
+                    point_count += 1
+        
+        # Create metadata for MongoDB
+        model_document = {
+            "filename": unique_filename,
+            "name": model_name,
+            "path": f"models/{unique_filename}",
+            "data": obj_data,  # Save binary data
+            "created_at": timestamp,
+            "point_count": point_count,
+            "frame_count": 0,  # No frames for direct uploads
+            "status": "completed",
+            "uploaded": True,  # Flag to indicate this was a direct upload
+            "visualization": None,  # No visualization for direct uploads
+            "gpu_used": False,
+            "reconstruction_data": {
+                "num_images": 0,
+                "workspace_path": None
+            }
+        }
+        
+        # Insert into MongoDB
+        model_id = models_collection.insert_one(model_document).inserted_id
+        
+        return render_template_string('''
+        <!doctype html>
+        <html>
+        <head>
+            <title>OBJ Upload Complete</title>
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+                .container { max-width: 800px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+                h1 { color: #2d3748; }
+                .success-icon { font-size: 60px; color: #48bb78; margin: 20px 0; }
+                p { color: #4a5568; margin-bottom: 25px; }
+                button { display: inline-block; padding: 12px 20px; font-size: 16px; color: white; background: #4299e1; text-decoration: none; border-radius: 8px; margin: 8px; border: none; cursor: pointer; font-weight: 600; transition: all 0.3s ease; }
+                button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+                .model-info { text-align: left; background: #f7fafc; padding: 15px; border-radius: 8px; margin: 20px 0; }
+                .model-info p { margin: 8px 0; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="success-icon">✓</div>
+                <h1>OBJ File Uploaded Successfully</h1>
+                <p>Your 3D model has been added to the database.</p>
+                
+                <div class="model-info">
+                    <p><strong>Model Name:</strong> {{ model_name }}</p>
+                    <p><strong>Stored As:</strong> {{ filename }}</p>
+                    <p><strong>Vertices:</strong> {{ point_count }}</p>
+                    <p><strong>Uploaded:</strong> {{ timestamp }}</p>
+                </div>
+                
+                <div>
+                    <a href="/"><button>Back to Home</button></a>
+                    <a href="/models"><button>View All Models</button></a>
+                    <a href="/model_view/{{ filename }}"><button>View This Model</button></a>
+                </div>
+            </div>
+        </body>
+        </html>
+        ''', model_name=model_name, filename=unique_filename, point_count=point_count, timestamp=timestamp.strftime("%Y-%m-%d %H:%M:%S"))
+        
+    except Exception as e:
+        app.logger.error(f"Error uploading OBJ file: {str(e)}")
+        return jsonify({"error": f"An error occurred while uploading the OBJ file: {str(e)}"}), 500
 
 @app.route('/process_video', methods=['POST'])
 def process_video():
@@ -1074,25 +1193,47 @@ def create_model():
 @app.route('/models')
 def list_models():
     """List all created 3D models"""
-    model_list = list(models_collection.find({}, {"name": 1, "_id": 0, "created_at": 1, "frame_count": 1, "point_count": 1, "gpu_used": 1}))
+    # Get all models from the collection
+    all_models = list(models_collection.find({}, {
+        "name": 1, 
+        "filename": 1, 
+        "_id": 0, 
+        "created_at": 1, 
+        "frame_count": 1, 
+        "point_count": 1, 
+        "gpu_used": 1,
+        "uploaded": 1,
+        "status": 1
+    }))
     
     # Prepare model previews
     model_previews = []
-    for model in model_list:
+    for model in all_models:
         created_at = model.get("created_at", "N/A")
         if isinstance(created_at, datetime.datetime):
             created_at_str = created_at.strftime('%Y-%m-%d %H:%M')
         else:
             created_at_str = 'N/A'
         
+        # Use filename for view_url if it exists, otherwise use name
+        filename = model.get("filename", model.get("name", ""))
+        
+        # Check if this was a direct upload
+        is_uploaded = model.get("uploaded", False)
+        
         model_previews.append({
-            "name": model.get("name", "N/A"),
+            "name": model.get("name", filename),
             "created_at": created_at_str,
             "frame_count": model.get("frame_count", "N/A"),
             "point_count": model.get("point_count", "N/A"),
             "gpu_used": model.get("gpu_used", "N/A"),
-            "view_url": f"/model_view/{model.get('name', '')}"
+            "view_url": f"/model_view/{filename}",
+            "type": "Uploaded OBJ" if is_uploaded else "COLMAP Reconstruction",
+            "status": model.get("status", "completed")
         })
+    
+    # Sort models by creation date (newest first)
+    model_previews = sorted(model_previews, key=lambda x: x["created_at"], reverse=True)
     
     return render_template_string('''
         <!doctype html>
@@ -1100,7 +1241,24 @@ def list_models():
         <head>
             <title>3D Models</title>
             <style>
-                /* Styles omitted for brevity */
+                body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+                .container { max-width: 900px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+                h1 { color: #2d3748; margin-bottom: 30px; }
+                .main-actions { margin-bottom: 30px; }
+                button { display: inline-block; padding: 12px 20px; font-size: 16px; color: white; background: #4299e1; text-decoration: none; border-radius: 8px; margin: 8px; border: none; cursor: pointer; font-weight: 600; transition: all 0.3s ease; }
+                button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th { background-color: #4a5568; color: white; padding: 12px; text-align: left; }
+                td { padding: 10px; border-bottom: 1px solid #e2e8f0; }
+                tr:hover { background-color: #f7fafc; }
+                .no-models { margin: 40px 0; padding: 20px; background-color: #f7fafc; border-radius: 8px; }
+                .gpu-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+                .gpu-active { background-color: #c6f6d5; color: #276749; }
+                .type-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+                .type-colmap { background-color: #e9d8fd; color: #553c9a; }
+                .type-upload { background-color: #fed7d7; color: #9b2c2c; }
+                .status-error { color: #e53e3e; }
+                .status-completed { color: #38a169; }
             </style>
         </head>
         <body>
@@ -1116,27 +1274,25 @@ def list_models():
                     <table>
                         <tr>
                             <th>Model Name</th>
+                            <th>Type</th>
                             <th>Created</th>
                             <th>Points</th>
                             <th>Frames</th>
-                            <th>Processing</th>
+                            <th>Status</th>
                             <th>Actions</th>
                         </tr>
                         {% for model in models %}
                             <tr>
                                 <td>{{ model.name }}</td>
+                                <td>
+                                    <span class="type-badge {{ 'type-upload' if model.type == 'Uploaded OBJ' else 'type-colmap' }}">
+                                        {{ model.type }}
+                                    </span>
+                                </td>
                                 <td>{{ model.created_at }}</td>
                                 <td>{{ model.point_count }}</td>
                                 <td>{{ model.frame_count }}</td>
-                                <td>
-                                    {% if model.gpu_used != 'N/A' %}
-                                        <span class="gpu-badge {{ 'gpu-active'}}">
-                                            {{ 'GPU'}}
-                                        </span>
-                                    {% else %}
-                                        N/A
-                                    {% endif %}
-                                </td>
+                                <td class="status-{{ model.status }}">{{ model.status }}</td>
                                 <td>
                                     <a href="{{ model.view_url }}">View 3D Model</a>
                                 </td>
@@ -1146,7 +1302,7 @@ def list_models():
                 {% else %}
                     <div class="no-models">
                         <p>No 3D models have been created yet.</p>
-                        <p>Go to the frames page to create a 3D model using COLMAP.</p>
+                        <p>Go to the frames page to create a 3D model using COLMAP or upload an OBJ file from the home page.</p>
                     </div>
                 {% endif %}
             </div>
