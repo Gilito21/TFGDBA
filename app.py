@@ -1331,12 +1331,14 @@ def view_model_3d(filename):
             <div id="debug-log"></div>
         </div>
 
+        <!-- Updated Three.js libraries with direct paths -->
         <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.7/dat.gui.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.7.1/gsap.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/controls/OrbitControls.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/loaders/OBJLoader.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/loaders/PLYLoader.js"></script>
+        
+        <!-- The OrbitControls import was problematic - use this direct path instead -->
+        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/PLYLoader.js"></script>
 
         <script>
             // Debug logging functions
@@ -1415,17 +1417,36 @@ def view_model_3d(filename):
             directionalLight2.position.set(-1, -1, -1);
             scene.add(directionalLight2);
 
-            // Add orbit controls
+            // Add orbit controls - THIS IS WHERE THE ERROR WAS HAPPENING
             let controls;
             try {
-                debug.info("Initializing OrbitControls");
-                controls = new THREE.OrbitControls(camera, renderer.domElement);
-                controls.enableDamping = true;
-                controls.dampingFactor = 0.05;
+                debug.info("Checking OrbitControls availability");
+                // Check if OrbitControls exists
+                if (typeof THREE.OrbitControls !== 'function') {
+                    debug.error("THREE.OrbitControls is not available. Loading a fallback version.");
+                    // If we get here, the controls weren't loaded properly
+                    document.getElementById('loading').textContent = 'Error: THREE.OrbitControls not available. Using fallback controls.';
+                    
+                    // Implement a basic controls fallback
+                    controls = {
+                        target: new THREE.Vector3(),
+                        update: function() { /* Do nothing */ }
+                    };
+                } else {
+                    debug.info("Initializing OrbitControls");
+                    controls = new THREE.OrbitControls(camera, renderer.domElement);
+                    controls.enableDamping = true;
+                    controls.dampingFactor = 0.05;
+                }
             } catch (e) {
                 debug.error(`OrbitControls initialization failed: ${e.message}`);
-                document.getElementById('loading').textContent = 'Error: Could not initialize controls';
-                throw e;
+                document.getElementById('loading').textContent = 'Error: Could not initialize controls. Using fallback.';
+                
+                // Create a simple fallback object if controls initialization fails
+                controls = {
+                    target: new THREE.Vector3(),
+                    update: function() { /* Do nothing */ }
+                };
             }
 
             // Create a group to hold the model
@@ -1437,6 +1458,13 @@ def view_model_3d(filename):
             
             if (modelType === 'obj') {
                 try {
+                    debug.info("Checking OBJLoader availability");
+                    if (typeof THREE.OBJLoader !== 'function') {
+                        debug.error("THREE.OBJLoader is not available");
+                        document.getElementById('loading').textContent = 'Error: THREE.OBJLoader not available';
+                        throw new Error("THREE.OBJLoader not available");
+                    }
+                    
                     debug.info("Creating OBJLoader");
                     loader = new THREE.OBJLoader();
                 } catch (e) {
@@ -1446,6 +1474,13 @@ def view_model_3d(filename):
                 }
             } else if (modelType === 'ply') {
                 try {
+                    debug.info("Checking PLYLoader availability");
+                    if (typeof THREE.PLYLoader !== 'function') {
+                        debug.error("THREE.PLYLoader is not available");
+                        document.getElementById('loading').textContent = 'Error: THREE.PLYLoader not available';
+                        throw new Error("THREE.PLYLoader not available");
+                    }
+                    
                     debug.info("Creating PLYLoader");
                     loader = new THREE.PLYLoader();
                 } catch (e) {
@@ -1726,7 +1761,7 @@ def view_model_3d(filename):
             }
         </script>
     </body>
-    </html>
+</html>
     ''', model_name=filename, point_count=model_data.get("point_count", "N/A"), created_at=created_at)
 
 if __name__ == '__main__':
