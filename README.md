@@ -113,7 +113,7 @@ Intuitive interface for uploading videos and viewing models
 ## 🏗️ Architecture
 
 <div align="center">
-<img src="https//:github.com/gilito21/TFGDBA/main/data_flow_diagram.drawio" alt="Architecture Diagram" width="800"/>
+<img src="data_flow_diagram.drawio" alt="Architecture Diagram" width="800"/>
 </div>
 
 ## 💻 Technology Stack
