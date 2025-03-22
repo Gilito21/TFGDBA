@@ -450,8 +450,8 @@ def delete_mongo_frames():
     try:
         # Connect to MongoDB and delete all frames
         # This assumes you have a MongoDB collection for frames
-        db = client["video_frames"]  # Replace with your actual database name
-        collection = db["frames"]      # Replace with your actual collection name
+        db = client["video_frames"]  
+        collection = db["frames"]      
         
         # Delete all documents in the collection
         result = collection.delete_many({})
@@ -697,8 +697,23 @@ def run_colmap_reconstruction(workspace_dir: Path, video_id: str = None):
             try:
                 import trimesh
                 mesh = trimesh.load(ply_model_path)
-                mesh.export(obj_model_path)
-                print("Successfully converted using trimesh")
+                
+                # Correctly format the OBJ file manually instead of using mesh.export
+                with open(obj_model_path, 'w') as f:
+                    # Write vertices with proper 'v' prefix
+                    for vertex in mesh.vertices:
+                        f.write(f"v {vertex[0]} {vertex[1]} {vertex[2]}\n")
+                    
+                    # Write faces with proper 'f' prefix (1-indexed as per OBJ standard)
+                    if hasattr(mesh, 'faces') and len(mesh.faces) > 0:
+                        for face in mesh.faces:
+                            # OBJ indices are 1-based
+                            f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+                    else:
+                        # If no faces, at least ensure it's a valid OBJ
+                        f.write(f"# Point cloud with no faces\n")
+                
+                print("Successfully converted using trimesh with manual OBJ formatting")
             except Exception as e2:
                 print(f"Trimesh conversion failed: {str(e2)}, trying final fallback...")
                 
@@ -998,17 +1013,24 @@ def create_model():
             # Run COLMAP reconstruction
             model_path, model_id = run_colmap_reconstruction(workspace_dir)
             
-            # Create a visualization from the resulting PLY
+            # Create a visualization from the OBJ file
             fig = plt.figure(figsize=(12, 10))
             ax = fig.add_subplot(111, projection='3d')
             
-            # Load and visualize the point cloud
-            point_cloud = np.loadtxt(model_path, skiprows=15, usecols=(0, 1, 2, 3, 4, 5))
-            points = point_cloud[:, :3]
-            colors = point_cloud[:, 3:] / 255.0  # Normalize RGB values
+            # Load OBJ file correctly
+            vertices = []
+            with open(model_path, 'r') as f:
+                for line in f:
+                    if line.startswith('v '):  # Vertex line
+                        parts = line.strip().split()
+                        if len(parts) >= 4:  # v x y z
+                            vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
             
-            # Plot points with their colors
-            ax.scatter(points[:, 0], points[:, 1], points[:, 2], s=1, c=colors)
+            vertices = np.array(vertices)
+            
+            # If there are colors, you would need to extract them differently
+            # For now, just use a default color
+            ax.scatter(vertices[:, 0], vertices[:, 1], vertices[:, 2], s=1, c='blue')
             ax.set_xlabel('X')
             ax.set_ylabel('Y')
             ax.set_zlabel('Z')
@@ -1032,7 +1054,7 @@ def create_model():
             with open(visualization_path, 'rb') as f:
                 viz_data = f.read()
             
-            point_count = len(points)
+            point_count = len(vertices)  # Changed from points to vertices
             
             # Insert model record in MongoDB
             insert_model_to_mongodb(model_name, model_data, viz_data, len(frame_paths), point_count, USE_GPU)
