@@ -170,16 +170,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 👥 Contributors
 
 <div align="center">
+   - Juan Pelaez
 <a href="https://github.com/gilito21/TFGDBA/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=gilito21/TFGDBA" />
 </a>
 </div>
 
 <div align="center">
-
-## 🌟 Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=gilito21/TFGDBA&type=Timeline)](https://star-history.com/#gilito21/TFGDBA&Timeline)
 
 </div>
 
