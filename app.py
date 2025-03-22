@@ -124,7 +124,7 @@ def upload_form():
         <style>
             body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
             .container { max-width: 700px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
-            h1 { color: #2d3748; margin-bottom: 20px; }
+            h1, h2 { color: #2d3748; margin-bottom: 20px; }
             .description { color: #4a5568; margin-bottom: 25px; }
             input[type="file"] { margin: 15px 0; }
             input[type="submit"], button { background: #4299e1; color: white; border: none; padding: 12px 18px; cursor: pointer; border-radius: 8px; margin: 8px; font-weight: 600; transition: all 0.3s ease; }
@@ -137,6 +137,7 @@ def upload_form():
             .buttons { display: flex; justify-content: center; gap: 10px; margin-top: 25px; }
             .model-btn { background: #48bb78; }
             .model-btn:hover { background: #38a169; }
+            .divider { border-top: 1px solid #e2e8f0; margin: 30px 0; }
         </style>
     </head>
     <body>
@@ -165,8 +166,10 @@ def upload_form():
                 <a href="/frames"><button>View Extracted Frames</button></a>
                 <a href="/models"><button class="model-btn">View 3D Models</button></a>
             </div>
-        </div>
-        <div class="container" style="margin-top: 30px;">
+
+            <div class="divider"></div>
+            
+            <!-- OBJ Upload Section -->
             <h2>Upload OBJ Files Directly</h2>
             <p class="description">Already have 3D models? Upload OBJ files directly to your collection.</p>
             
