@@ -7,7 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ARG CUDA_ARCH=86
 ENV CUDA_ARCH=${CUDA_ARCH}
 
-# Install system dependencies
+# Install system dependencies in a single layer
 RUN apt-get update && apt-get install -y \
     git \
     cmake \
@@ -30,7 +30,11 @@ RUN apt-get update && apt-get install -y \
     libatlas-base-dev \
     libsuitesparse-dev \
     libceres-dev \
-    libflann-dev \  # Added FLANN dependency
+    libflann-dev \
+    libmetis-dev \
+    libgtest-dev \
+    libgmock-dev \
+    libsqlite3-dev \
     python3-pip \
     python3-dev \
     python3-opencv \
@@ -47,6 +51,16 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Install FLANN from source if package doesn't work
+RUN git clone https://github.com/flann-lib/flann.git /opt/flann && \
+    cd /opt/flann && \
+    mkdir build && \
+    cd build && \
+    cmake .. -DBUILD_C_BINDINGS=ON -DBUILD_PYTHON_BINDINGS=OFF -DBUILD_MATLAB_BINDINGS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF -DBUILD_DOC=OFF && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig
+
 # Install COLMAP from source with the specified architecture
 WORKDIR /opt
 RUN git clone https://github.com/colmap/colmap.git && \
@@ -58,7 +72,9 @@ RUN git clone https://github.com/colmap/colmap.git && \
     cmake .. -GNinja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_CUDA_COMPILER=/usr/bin/nvcc \
-      -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} && \
+      -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
+      -DFLANN_INCLUDE_DIR=/usr/local/include \
+      -DFLANN_LIBRARY=/usr/local/lib/libflann.so && \
     ninja && \
     ninja install
 
