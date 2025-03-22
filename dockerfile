@@ -1,105 +1,119 @@
-FROM ubuntu:22.04
+FROM ubuntu:20.04
 
-# Set noninteractive installation
+# Avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Accept CUDA architecture as build argument
-ARG CUDA_ARCH=86
-ENV CUDA_ARCH=${CUDA_ARCH}
-
-# Install system dependencies in a single layer
+# Install basic dependencies
 RUN apt-get update && apt-get install -y \
+    sudo \
+    python3-dev \
+    python3-pip \
+    python3-venv \
+    wget \
     git \
     cmake \
     ninja-build \
     build-essential \
     libboost-program-options-dev \
-    libboost-filesystem-dev \
     libboost-graph-dev \
     libboost-system-dev \
     libeigen3-dev \
-    libsuitesparse-dev \
+    libflann-dev \
     libfreeimage-dev \
+    libmetis-dev \
     libgoogle-glog-dev \
-    libgflags-dev \
+    libgtest-dev \
+    libgmock-dev \
+    libsqlite3-dev \
     libglew-dev \
     qtbase5-dev \
     libqt5opengl5-dev \
     libcgal-dev \
-    libcgal-qt5-dev \
-    libatlas-base-dev \
-    libsuitesparse-dev \
-    libceres-dev \
-    libflann-dev \
-    libmetis-dev \
-    libgtest-dev \
-    libgmock-dev \
-    libsqlite3-dev \
-    python3-pip \
-    python3-dev \
-    python3-opencv \
-    ffmpeg \
-    libavcodec-dev \
-    libavformat-dev \
-    libswscale-dev \
-    libavutil-dev \
-    wget \
-    unzip \
-    curl \
+    libceres-dev
+
+# Install CUDA toolkit
+RUN apt-get install -y \
     nvidia-cuda-toolkit \
-    nvidia-cuda-toolkit-gcc \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    nvidia-cuda-toolkit-gcc
 
-# Install FLANN from source if package doesn't work
-RUN git clone https://github.com/flann-lib/flann.git /opt/flann && \
-    cd /opt/flann && \
-    mkdir build && \
-    cd build && \
-    cmake .. -DBUILD_C_BINDINGS=ON -DBUILD_PYTHON_BINDINGS=OFF -DBUILD_MATLAB_BINDINGS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF -DBUILD_DOC=OFF && \
-    make -j$(nproc) && \
-    make install && \
-    ldconfig
+# Set CUDA environment variables
+ENV CUDACXX=/usr/bin/nvcc
 
-# Install COLMAP from source with the specified architecture
-WORKDIR /opt
-RUN git clone https://github.com/colmap/colmap.git && \
-    cd colmap && \
-    git checkout main && \
-    mkdir build && \
-    cd build && \
-    echo "Building COLMAP with CUDA architecture: ${CUDA_ARCH}" && \
-    cmake .. -GNinja \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_CUDA_COMPILER=/usr/bin/nvcc \
-      -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
-      -DFLANN_INCLUDE_DIR=/usr/local/include \
-      -DFLANN_LIBRARY=/usr/local/lib/libflann.so && \
-    ninja && \
-    ninja install
-
-# Add COLMAP to PATH
-ENV PATH="/opt/colmap/build/src/colmap/exe:${PATH}"
-
-# Create app directory
+# Create a working directory
 WORKDIR /app
 
-# Create necessary directories
-RUN mkdir -p /app/uploads /app/frames /app/models /app/colmap_workspace
+# Clone your repo
+RUN git clone https://github.com/Gilito21/TFGDBA.git /app/TFGDBA
 
-# Copy requirements file
-COPY requirements.txt /app/
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Set up Python virtual environment
+RUN python3 -m venv /app/venv
+ENV PATH="/app/venv/bin:$PATH"
+RUN pip install --upgrade pip
 
-# Copy application code
-COPY . /app/
+# Install Python dependencies from your repo
+WORKDIR /app/TFGDBA
+RUN pip install -r requirements.txt
 
-# Expose the port
-EXPOSE 5000
+# Create a script to detect GPU architecture and build COLMAP
+RUN echo '#!/bin/bash \n\
+# Get GPU architecture from device \n\
+if command -v nvidia-smi &> /dev/null; then \n\
+  GPU_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n 1 | tr -d ".") \n\
+  if [ -z "$GPU_ARCH" ]; then \n\
+    # Fallback to a safe default if detection fails \n\
+    echo "GPU architecture detection failed, using default value 75" \n\
+    GPU_ARCH=75 \n\
+  fi \n\
+else \n\
+  # If nvidia-smi is not available, use a default value \n\
+  echo "nvidia-smi not found, using default GPU architecture value 75" \n\
+  GPU_ARCH=75 \n\
+fi \n\
+echo "Detected GPU architecture: $GPU_ARCH" \n\
+\n\
+# Clone and build COLMAP \n\
+cd /app \n\
+git clone https://github.com/colmap/colmap.git \n\
+cd /app/colmap \n\
+mkdir -p build \n\
+cd build \n\
+\n\
+# Build COLMAP with detected architecture \n\
+cmake .. -GNinja \\\n\
+  -DCMAKE_BUILD_TYPE=Release \\\n\
+  -DCMAKE_CUDA_COMPILER=/usr/bin/nvcc \\\n\
+  -DCMAKE_CUDA_ARCHITECTURES=$GPU_ARCH \n\
+\n\
+# Compile COLMAP \n\
+ninja \n\
+\n\
+# Add COLMAP to PATH \n\
+echo "export PATH=/app/colmap/build/src/colmap/exe:$PATH" >> /app/venv/bin/activate \n\
+' > /app/build_colmap.sh
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV FLASK_APP=app.py
+# Make the script executable
+RUN chmod +x /app/build_colmap.sh
 
-# Run the application
-CMD ["python3", "app.py"]
+# Create a startup script
+RUN echo '#!/bin/bash \n\
+# Run the build script if COLMAP is not already built \n\
+if [ ! -d "/app/colmap/build" ]; then \n\
+  /app/build_colmap.sh \n\
+fi \n\
+\n\
+# Source the virtual environment \n\
+source /app/venv/bin/activate \n\
+\n\
+# Run the application \n\
+cd /app/TFGDBA \n\
+python app.py \n\
+' > /app/start.sh
+
+# Make the startup script executable
+RUN chmod +x /app/start.sh
+
+# Return to your project directory
+WORKDIR /app/TFGDBA
+
+# Command to run when container starts
+CMD ["/app/start.sh"]
