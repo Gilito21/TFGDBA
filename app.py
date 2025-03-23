@@ -3000,20 +3000,25 @@ def select_models_to_compare():
         "created_at": 1
     }))
     
-    # Convert any string dates to datetime objects to ensure consistent sorting
+    # Convert any datetime objects to ISO format strings for consistent handling
     for model in all_models:
-        if "created_at" in model and isinstance(model["created_at"], str):
-            try:
-                model["created_at"] = datetime.datetime.fromisoformat(model["created_at"])
-            except (ValueError, TypeError):
-                # If conversion fails, set a default old date to sort these last
-                model["created_at"] = datetime.datetime(1970, 1, 1)
+        if "created_at" in model:
+            if isinstance(model["created_at"], datetime.datetime):
+                # Convert datetime to string for consistent comparison
+                model["created_at"] = model["created_at"].isoformat()
+            elif not isinstance(model["created_at"], str):
+                # If it's neither datetime nor string, set default value
+                model["created_at"] = "1970-01-01T00:00:00"
     
     # Sort models by creation date (newest first)
-    # Handle cases where created_at might be missing
-    all_models = sorted(all_models, 
-                       key=lambda x: x.get("created_at", datetime.datetime(1970, 1, 1)), 
-                       reverse=True)
+    # Use a sorting function that handles string ISO dates correctly
+    def sort_key(x):
+        created_at = x.get("created_at", "1970-01-01T00:00:00")
+        if not created_at:
+            return "1970-01-01T00:00:00"
+        return created_at
+    
+    all_models = sorted(all_models, key=sort_key, reverse=True)
     
     # Extract just the filenames for the template
     model_filenames = [model.get("filename") for model in all_models if model.get("filename")]
