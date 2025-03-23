@@ -41,35 +41,33 @@ sudo docker rm tfgdba-instance 2>/dev/null || true
 echo "Pulling base Docker image..."
 sudo docker pull tiogilito21/tfgdba-app:latest
 
-# Run the container with mounted code
-echo "Starting the application with the latest code..."
+# First, start the container in a persistent mode with a simple tail command
+echo "Starting container..."
 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     echo "Running on ARM architecture, using platform emulation..."
     sudo docker run -d --platform linux/amd64 --gpus all -p 0.0.0.0:5000:5000 \
         --name tfgdba-instance \
         -v $(pwd)/TFGDBA:/app/TFGDBA \
-        --entrypoint "/bin/bash" \
         tiogilito21/tfgdba-app:latest \
-        -c "cd /app/TFGDBA && python3 app.py"
+        tail -f /dev/null
 else
     echo "Running on AMD64 architecture..."
     sudo docker run -d --gpus all -p 0.0.0.0:5000:5000 \
         --name tfgdba-instance \
         -v $(pwd)/TFGDBA:/app/TFGDBA \
-        --entrypoint "/bin/bash" \
         tiogilito21/tfgdba-app:latest \
-        -c "cd /app/TFGDBA && python3 app.py"
+        tail -f /dev/null
 fi
 
-# Install dependencies inside the container
+# Now install dependencies inside the running container
 echo "Installing required dependencies..."
 sudo docker exec tfgdba-instance pip install open3d pymeshlab trimesh
 
-# Restart the container to pick up new dependencies
-echo "Restarting container to apply dependency changes..."
-sudo docker restart tfgdba-instance
+# Now start the application
+echo "Starting the application..."
+sudo docker exec -d tfgdba-instance bash -c "cd /app/TFGDBA && python3 app.py"
 
-# Wait for container to initialize
+# Wait for application to initialize
 echo "Waiting for the application to initialize..."
 sleep 5
 
@@ -79,7 +77,8 @@ sudo docker ps | grep tfgdba-instance
 
 # Show application logs
 echo "Application logs:"
-sudo docker logs tfgdba-instance
+sudo docker exec tfgdba-instance bash -c "cd /app/TFGDBA && ps aux | grep python"
+sudo docker logs tfgdba-instance | tail -n 20
 
 # Display follow logs instruction
 echo -e "\nYour application is now running at http://$(curl -s ifconfig.me):5000"
@@ -95,8 +94,9 @@ cd TFGDBA
 git pull
 cd ..
 
-echo "Restarting container to apply changes..."
-sudo docker restart tfgdba-instance
+echo "Restarting application..."
+sudo docker exec tfgdba-instance bash -c "pkill -f 'python3 app.py' || true"
+sudo docker exec -d tfgdba-instance bash -c "cd /app/TFGDBA && python3 app.py"
 
 echo "Application updated and restarted!"
 echo "Your application is running at http://$(curl -s ifconfig.me):5000"
