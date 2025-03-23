@@ -19,7 +19,9 @@ from mpl_toolkits.mplot3d import Axes3D
 from base64 import b64encode
 import trimesh
 import subprocess
-
+import logging
+import pymeshlab
+import open3d as o3d
 app = Flask(__name__)
 
 UPLOAD_FOLDER = "uploads"
@@ -48,6 +50,9 @@ model_creation_progress = {
     "error": None,
     "model_path": None
 }
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('mesh_processing')
 
 # Check for GPU availability
 USE_GPU = torch.cuda.is_available()
@@ -1484,6 +1489,7 @@ def view_model_3d(filename):
         
         <div class="controls">
             <button id="wireframe">Toggle Wireframe</button>
+            <button id="process" onclick="window.location.href='/process_mesh/{{ filename }}'" style="background: #805ad5;">Process Model</button>
             <button id="rotate">Pause Rotation</button>
             <button id="resetView">Reset View</button>
             <button id="rotateX">Flip X</button>
@@ -3159,6 +3165,762 @@ def select_models_to_compare():
     </body>
     </html>
     ''', model_filenames=model_filenames)
+
+def process_point_cloud_to_mesh(point_cloud_path, output_path, method="poisson", depth=8, sample_ratio=1.0):
+    """
+    Convert a point cloud to a mesh using different methods
+    
+    Parameters:
+    -----------
+    point_cloud_path : str
+        Path to the input point cloud file (PLY, XYZ, PCD)
+    output_path : str
+        Path to save the output mesh (.obj)
+    method : str
+        Reconstruction method: "poisson", "alpha_shape", or "ball_pivot"
+    depth : int
+        Depth parameter for Poisson reconstruction (higher = more detail)
+    sample_ratio : float
+        Ratio of points to use (0.0-1.0)
+    
+    Returns:
+    --------
+    bool
+        Success or failure
+    """
+    try:
+        logger.info(f"Processing point cloud at {point_cloud_path} to mesh using {method} method")
+        
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # Read the point cloud
+        pcd = o3d.io.read_point_cloud(point_cloud_path)
+        
+        # Sample points if needed
+        if sample_ratio < 1.0:
+            points = np.asarray(pcd.points)
+            n_points = len(points)
+            sample_size = max(10, int(n_points * sample_ratio))
+            indices = np.random.choice(n_points, sample_size, replace=False)
+            pcd = pcd.select_by_index(indices)
+            logger.info(f"Sampled point cloud from {n_points} to {sample_size} points")
+        
+        # Estimate normals if not present
+        if not pcd.has_normals():
+            logger.info("Estimating normals for point cloud")
+            pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+            pcd.orient_normals_consistent_tangent_plane(100)
+        
+        # Create mesh based on selected method
+        mesh = None
+        
+        if method == "poisson":
+            logger.info(f"Running Poisson reconstruction with depth {depth}")
+            mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                pcd, depth=depth, linear_fit=True)
+            
+            # Filter out low-density vertices
+            if len(densities) > 0:
+                densities = np.asarray(densities)
+                density_threshold = np.quantile(densities, 0.1)  # Remove bottom 10% density
+                vertices_to_remove = densities < density_threshold
+                mesh.remove_vertices_by_mask(vertices_to_remove)
+        
+        elif method == "alpha_shape":
+            logger.info("Running Alpha Shape reconstruction")
+            # Determine alpha value (radius parameter) automatically
+            points = np.asarray(pcd.points)
+            distances = []
+            for i in range(min(1000, len(points))):
+                pt = points[np.random.randint(len(points))]
+                dists = np.linalg.norm(points - pt, axis=1)
+                distances.append(np.min(dists[dists > 0]))
+            
+            # Use 2x the average distance to nearest neighbor as alpha
+            alpha = 2.0 * np.mean(distances)
+            logger.info(f"Using alpha value of {alpha:.4f}")
+            mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha)
+            
+        elif method == "ball_pivot":
+            logger.info("Running Ball Pivot reconstruction")
+            # Estimate radius based on point density
+            points = np.asarray(pcd.points)
+            distances = []
+            for i in range(min(1000, len(points))):
+                pt = points[np.random.randint(len(points))]
+                dists = np.linalg.norm(points - pt, axis=1)
+                distances.append(np.min(dists[dists > 0]))
+            
+            # Use 3 different radii for multi-scale reconstruction
+            avg_dist = np.mean(distances)
+            radii = [avg_dist * 2, avg_dist * 5, avg_dist * 10]
+            logger.info(f"Using ball radii of {radii}")
+            mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+                pcd, o3d.utility.DoubleVector(radii))
+        
+        if mesh is None or len(mesh.triangles) == 0:
+            logger.error("Mesh reconstruction failed - no triangles were created")
+            return False
+        
+        # Fill holes
+        logger.info("Filling holes in mesh")
+        mesh.fill_holes()
+        
+        # Clean up the mesh
+        logger.info("Cleaning mesh (removing duplicates, degenerate faces)")
+        mesh.remove_degenerate_triangles()
+        mesh.remove_duplicated_triangles()
+        mesh.remove_duplicated_vertices()
+        mesh.remove_non_manifold_edges()
+        
+        # Save mesh
+        o3d.io.write_triangle_mesh(output_path, mesh)
+        logger.info(f"Mesh saved to {output_path}")
+        
+        return True
+    
+    except Exception as e:
+        logger.error(f"Error in point cloud to mesh conversion: {str(e)}")
+        return False
+
+def clean_mesh(input_path, output_path, options=None):
+    """
+    Clean a mesh by removing noise, filling holes, and fixing artifacts
+    
+    Parameters:
+    -----------
+    input_path : str
+        Path to the input mesh file
+    output_path : str
+        Path to save the cleaned mesh
+    options : dict
+        Cleaning options:
+            - remove_isolated: bool - Remove isolated pieces
+            - fill_holes: bool - Fill small holes
+            - smooth: bool - Apply smoothing
+            - remove_spikes: bool - Remove spike artifacts
+            - fix_normals: bool - Fix normal orientations
+    
+    Returns:
+    --------
+    bool
+        Success or failure
+    """
+    try:
+        logger.info(f"Cleaning mesh: {input_path}")
+        
+        if options is None:
+            options = {
+                'remove_isolated': True,
+                'fill_holes': True,
+                'smooth': True,
+                'remove_spikes': True,
+                'fix_normals': True
+            }
+        
+        # Create a new MeshSet
+        ms = pymeshlab.MeshSet()
+        
+        # Load the mesh
+        ms.load_new_mesh(input_path)
+        
+        # Get mesh info before cleaning
+        mesh_info_before = ms.current_mesh().vertex_number(), ms.current_mesh().face_number()
+        logger.info(f"Before cleaning: {mesh_info_before[0]} vertices, {mesh_info_before[1]} faces")
+        
+        # Remove unreferenced vertices
+        ms.compute_mesh_tessellation()
+        ms.remove_unreferenced_vertices()
+        
+        # Remove isolated pieces
+        if options.get('remove_isolated', True):
+            logger.info("Removing isolated pieces")
+            ms.compute_connected_components()
+            # Keep only the largest component
+            ms.meshing_remove_connected_component(mincomponentsize=ms.current_mesh().face_number() * 0.1)
+        
+        # Remove duplicate faces and vertices
+        ms.remove_duplicate_vertices()
+        ms.remove_duplicate_faces()
+        
+        # Fix mesh orientation and normals
+        if options.get('fix_normals', True):
+            logger.info("Fixing normals")
+            ms.compute_normal_for_point_clouds(k=10)
+            ms.meshing_repair_non_manifold_edges()
+            ms.compute_normal_face_consistent()
+        
+        # Fill small holes
+        if options.get('fill_holes', True):
+            logger.info("Filling small holes")
+            # First try to close holes
+            ms.meshing_close_holes(maxholesize=50)  # Max hole size in edges
+            # Then refine the result
+            ms.remeshing_isotropic_explicit_remeshing(targetlen=pymeshlab.Percentage(0.5))
+        
+        # Remove spike artifacts
+        if options.get('remove_spikes', True):
+            logger.info("Removing spike artifacts")
+            # First select spikes using curvature
+            ms.compute_curvature_principal_directions(method='Taubin')
+            # Then smooth them
+            ms.apply_coord_taubin_smoothing(lambda_=0.5, mu=-0.53, stepSmoothNum=10)
+        
+        # Apply smoothing if requested
+        if options.get('smooth', True):
+            logger.info("Applying smoothing")
+            ms.apply_coord_laplacian_smoothing(stepsmoothnum=3, boundary=True)
+
+        # Get mesh info after cleaning
+        mesh_info_after = ms.current_mesh().vertex_number(), ms.current_mesh().face_number()
+        logger.info(f"After cleaning: {mesh_info_after[0]} vertices, {mesh_info_after[1]} faces")
+        
+        # Save the result
+        ms.save_current_mesh(output_path)
+        logger.info(f"Cleaned mesh saved to {output_path}")
+        
+        return True
+    
+    except Exception as e:
+        logger.error(f"Error in mesh cleaning: {str(e)}")
+        return False
+
+def decimate_mesh(input_path, output_path, target_reduction=0.5, method="quadric"):
+    """
+    Decimate (simplify) a mesh to reduce complexity
+    
+    Parameters:
+    -----------
+    input_path : str
+        Path to the input mesh file
+    output_path : str
+        Path to save the decimated mesh
+    target_reduction : float
+        Target reduction ratio (0.0-1.0)
+        0.5 means reduce vertices by 50%
+    method : str
+        Decimation method: "quadric" or "clustering"
+    
+    Returns:
+    --------
+    bool
+        Success or failure
+    dict
+        Statistics about the decimation
+    """
+    try:
+        logger.info(f"Decimating mesh: {input_path} with target reduction {target_reduction}")
+        
+        # Create a new MeshSet
+        ms = pymeshlab.MeshSet()
+        
+        # Load the mesh
+        ms.load_new_mesh(input_path)
+        
+        # Get mesh info before decimation
+        vertices_before = ms.current_mesh().vertex_number()
+        faces_before = ms.current_mesh().face_number()
+        logger.info(f"Before decimation: {vertices_before} vertices, {faces_before} faces")
+        
+        # Calculate target face count
+        target_face_num = int(faces_before * (1 - target_reduction))
+        
+        # Apply decimation based on method
+        if method == "quadric":
+            logger.info(f"Using quadric edge collapse decimation to {target_face_num} faces")
+            ms.meshing_decimation_quadric_edge_collapse(
+                targetfacenum=target_face_num,
+                preserveboundary=True,
+                preservenormal=True,
+                preservetopology=True
+            )
+        
+        elif method == "clustering":
+            logger.info("Using clustering decimation")
+            # Calculate cell size based on mesh bounding box and target reduction
+            bbox = ms.current_mesh().bounding_box()
+            diag = pymeshlab.Scalar(np.linalg.norm(
+                np.array([bbox.dim_x(), bbox.dim_y(), bbox.dim_z()])
+            ))
+            cell_size = diag * pymeshlab.Percentage(target_reduction) * 0.01  # Convert to percentage
+            
+            ms.meshing_decimation_clustering(threshold=cell_size)
+        
+        # Get mesh info after decimation
+        vertices_after = ms.current_mesh().vertex_number()
+        faces_after = ms.current_mesh().face_number()
+        
+        # Calculate actual reduction
+        vertex_reduction = (vertices_before - vertices_after) / vertices_before
+        face_reduction = (faces_before - faces_after) / faces_before
+        
+        logger.info(f"After decimation: {vertices_after} vertices, {faces_after} faces")
+        logger.info(f"Reduction: vertices {vertex_reduction:.2f}, faces {face_reduction:.2f}")
+        
+        # Save the result
+        ms.save_current_mesh(output_path)
+        
+        # Return statistics
+        stats = {
+            "vertices_before": vertices_before,
+            "vertices_after": vertices_after,
+            "faces_before": faces_before,
+            "faces_after": faces_after,
+            "vertex_reduction": vertex_reduction,
+            "face_reduction": face_reduction
+        }
+        
+        return True, stats
+    
+    except Exception as e:
+        logger.error(f"Error in mesh decimation: {str(e)}")
+        return False, {"error": str(e)}
+
+# Flask routes to add
+
+@app.route('/process_mesh/<filename>', methods=['GET'])
+def process_mesh_view(filename):
+    """View page with options to process a mesh"""
+    return render_template_string('''
+    <!doctype html>
+    <html>
+    <head>
+        <title>Process 3D Mesh</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+            .container { max-width: 800px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+            h1, h2 { color: #2d3748; }
+            .section { margin-bottom: 30px; text-align: left; }
+            form { margin: 20px 0; }
+            .form-group { margin-bottom: 15px; }
+            label { display: block; margin-bottom: 5px; font-weight: bold; }
+            select, input { padding: 8px; border-radius: 4px; border: 1px solid #ddd; width: 100%; max-width: 300px; }
+            .checkbox-group { margin: 10px 0; }
+            .checkbox-group label { display: inline; font-weight: normal; margin-left: 5px; }
+            button { background: #4299e1; color: white; border: none; padding: 12px 18px; cursor: pointer; border-radius: 8px; margin: 8px 0; font-weight: 600; transition: all 0.3s ease; }
+            button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+            .info { background: #ebf8ff; border-left: 4px solid #4299e1; padding: 10px; margin: 10px 0; }
+            .back-button { display: inline-block; margin-top: 20px; padding: 10px 15px; background: #718096; color: white; border-radius: 5px; text-decoration: none; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Process 3D Model</h1>
+            <p>Apply operations to improve or modify your 3D model</p>
+            
+            <div class="section">
+                <h2>Model Information</h2>
+                <p><strong>Filename:</strong> {{ filename }}</p>
+                
+                <div class="info">
+                    <p><strong>Note:</strong> Processing operations may take several minutes depending on the complexity of your model.</p>
+                </div>
+            </div>
+            
+            <!-- Point Cloud to Mesh Conversion -->
+            <div class="section">
+                <h2>Point Cloud to Mesh Conversion</h2>
+                <p>Convert a point cloud (e.g. from COLMAP) to a complete 3D mesh</p>
+                
+                <form action="/convert_point_cloud_to_mesh/{{ filename }}" method="post">
+                    <div class="form-group">
+                        <label for="method">Reconstruction Method:</label>
+                        <select name="method" id="method">
+                            <option value="poisson">Poisson Surface Reconstruction (Best quality)</option>
+                            <option value="alpha_shape">Alpha Shape (Faster, works with fewer points)</option>
+                            <option value="ball_pivot">Ball Pivoting (Preserves original points)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="detail">Detail Level:</label>
+                        <select name="detail" id="detail">
+                            <option value="low">Low (Faster)</option>
+                            <option value="medium" selected>Medium (Balanced)</option>
+                            <option value="high">High (Slower, more detail)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="sample_ratio">Point Sampling Ratio:</label>
+                        <select name="sample_ratio" id="sample_ratio">
+                            <option value="0.25">25% (Faster)</option>
+                            <option value="0.5">50% (Balanced)</option>
+                            <option value="1.0" selected>100% (Higher quality)</option>
+                        </select>
+                    </div>
+                    
+                    <button type="submit">Convert to Mesh</button>
+                </form>
+            </div>
+            
+            <!-- Mesh Cleaning -->
+            <div class="section">
+                <h2>Mesh Cleaning</h2>
+                <p>Clean the mesh to remove noise, artifacts, and fix issues</p>
+                
+                <form action="/clean_mesh/{{ filename }}" method="post">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="remove_isolated" name="remove_isolated" checked>
+                        <label for="remove_isolated">Remove isolated pieces</label>
+                    </div>
+                    
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="fill_holes" name="fill_holes" checked>
+                        <label for="fill_holes">Fill holes</label>
+                    </div>
+                    
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="smooth" name="smooth" checked>
+                        <label for="smooth">Apply smoothing</label>
+                    </div>
+                    
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="remove_spikes" name="remove_spikes" checked>
+                        <label for="remove_spikes">Remove spike artifacts</label>
+                    </div>
+                    
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="fix_normals" name="fix_normals" checked>
+                        <label for="fix_normals">Fix normals</label>
+                    </div>
+                    
+                    <button type="submit">Clean Mesh</button>
+                </form>
+            </div>
+            
+            <!-- Mesh Decimation -->
+            <div class="section">
+                <h2>Mesh Decimation</h2>
+                <p>Reduce the complexity of the mesh while preserving its shape</p>
+                
+                <form action="/decimate_mesh/{{ filename }}" method="post">
+                    <div class="form-group">
+                        <label for="target_reduction">Target Reduction:</label>
+                        <select name="target_reduction" id="target_reduction">
+                            <option value="0.25">25% (Minimal reduction)</option>
+                            <option value="0.5" selected>50% (Balanced)</option>
+                            <option value="0.75">75% (Aggressive reduction)</option>
+                            <option value="0.9">90% (Maximum reduction)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="decimation_method">Method:</label>
+                        <select name="decimation_method" id="decimation_method">
+                            <option value="quadric" selected>Quadric Edge Collapse (Better quality)</option>
+                            <option value="clustering">Clustering (Faster)</option>
+                        </select>
+                    </div>
+                    
+                    <button type="submit">Decimate Mesh</button>
+                </form>
+            </div>
+            
+            <a href="/model_view/{{ filename }}" class="back-button">Back to Model View</a>
+        </div>
+    </body>
+    </html>
+    ''', filename=filename)
+
+@app.route('/convert_point_cloud_to_mesh/<filename>', methods=['POST'])
+def convert_point_cloud_to_mesh(filename):
+    """Convert a point cloud to a mesh using selected method"""
+    try:
+        # Get form parameters
+        method = request.form.get('method', 'poisson')
+        detail_level = request.form.get('detail', 'medium')
+        sample_ratio = float(request.form.get('sample_ratio', 1.0))
+        
+        # Map detail level to method-specific parameters
+        if method == 'poisson':
+            depth_map = {'low': 6, 'medium': 8, 'high': 10}
+            depth = depth_map[detail_level]
+        else:
+            depth = 8  # Not used for other methods
+        
+        # Find the model in MongoDB
+        model_data = models_collection.find_one({"filename": filename})
+        
+        if not model_data:
+            return jsonify({"error": "Model not found"}), 404
+        
+        # Save the point cloud to a temporary file
+        temp_dir = tempfile.mkdtemp()
+        temp_input = os.path.join(temp_dir, "input_pointcloud.ply")
+        
+        with open(temp_input, 'wb') as f:
+            f.write(model_data["data"])
+        
+        # Create a new filename for the mesh
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        new_filename = f"{os.path.splitext(filename)[0]}_mesh_{timestamp}.obj"
+        output_path = os.path.join(MODEL_FOLDER, new_filename)
+        
+        # Process the point cloud to mesh
+        success = process_point_cloud_to_mesh(
+            temp_input, 
+            output_path, 
+            method=method, 
+            depth=depth, 
+            sample_ratio=sample_ratio
+        )
+        
+        if not success:
+            return render_template_string('''
+            <!doctype html>
+            <html>
+            <head>
+                <title>Conversion Error</title>
+                <style>
+                    body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+                    .container { max-width: 700px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+                    h1 { color: #e53e3e; }
+                    p { color: #4a5568; margin-bottom: 25px; }
+                    .error-icon { font-size: 60px; color: #e53e3e; margin: 20px 0; }
+                    button { background: #4299e1; color: white; border: none; padding: 12px 18px; cursor: pointer; border-radius: 8px; margin: 8px; font-weight: 600; transition: all 0.3s ease; }
+                    button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="error-icon">❌</div>
+                    <h1>Cleaning Failed</h1>
+                    <p>There was an error cleaning the mesh. This could be due to:</p>
+                    <ul style="text-align: left;">
+                        <li>Input file is not a valid mesh</li>
+                        <li>Mesh has too many issues to repair</li>
+                        <li>Server processing error</li>
+                    </ul>
+                    <p>Try with a different model or different cleaning settings.</p>
+                    <a href="/process_mesh/{{ filename }}"><button>Back to Processing Options</button></a>
+                </div>
+            </body>
+            </html>
+            ''', filename=filename)
+        
+        # If successful, load the new mesh file and save to MongoDB
+        with open(output_path, 'rb') as f:
+            mesh_data = f.read()
+        
+        # Count vertices in the OBJ file
+        vertex_count = 0
+        with open(output_path, 'r') as f:
+            for line in f:
+                if line.startswith('v '):
+                    vertex_count += 1
+        
+        # Save to MongoDB
+        new_model = {
+            "filename": new_filename,
+            "name": f"Cleaned {filename}",
+            "data": mesh_data,
+            "created_at": datetime.datetime.now(),
+            "source_model": filename,
+            "cleaning_options": options,
+            "point_count": vertex_count,
+            "processed": True
+        }
+        
+        models_collection.insert_one(new_model)
+        
+        # Clean up temporary files
+        try:
+            import shutil
+            shutil.rmtree(temp_dir)
+        except:
+            pass
+        
+        # Success page
+        return render_template_string('''
+        <!doctype html>
+        <html>
+        <head>
+            <title>Cleaning Complete</title>
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+                .container { max-width: 700px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+                h1 { color: #38a169; }
+                p { color: #4a5568; margin-bottom: 25px; }
+                .success-icon { font-size: 60px; color: #38a169; margin: 20px 0; }
+                button { background: #4299e1; color: white; border: none; padding: 12px 18px; cursor: pointer; border-radius: 8px; margin: 8px; font-weight: 600; transition: all 0.3s ease; }
+                button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="success-icon">✓</div>
+                <h1>Cleaning Complete</h1>
+                <p>The mesh was successfully cleaned.</p>
+                <div>
+                    <p><strong>New model:</strong> {{ new_filename }}</p>
+                    <p><strong>Vertices:</strong> {{ vertex_count }}</p>
+                    <p><strong>Applied operations:</strong> {{ operations }}</p>
+                </div>
+                <div>
+                    <a href="/model_view/{{ new_filename }}"><button>View Cleaned Mesh</button></a>
+                    <a href="/models"><button>All Models</button></a>
+                </div>
+            </div>
+        </body>
+        </html>
+        ''', new_filename=new_filename, vertex_count=vertex_count, 
+            operations=", ".join([k for k, v in options.items() if v]))
+    
+    except Exception as e:
+        logger.error(f"Error in mesh cleaning: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/decimate_mesh/<filename>', methods=['POST'])
+def decimate_mesh_route(filename):
+    """Decimate a mesh to reduce its complexity"""
+    try:
+        # Get decimation options from form
+        target_reduction = float(request.form.get('target_reduction', 0.5))
+        method = request.form.get('decimation_method', 'quadric')
+        
+        # Find the model in MongoDB
+        model_data = models_collection.find_one({"filename": filename})
+        
+        if not model_data:
+            return jsonify({"error": "Model not found"}), 404
+        
+        # Save the mesh to a temporary file
+        temp_dir = tempfile.mkdtemp()
+        temp_input = os.path.join(temp_dir, "input_mesh.obj")
+        
+        with open(temp_input, 'wb') as f:
+            f.write(model_data["data"])
+        
+        # Create a new filename for the decimated mesh
+        reduction_percent = int(target_reduction * 100)
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        new_filename = f"{os.path.splitext(filename)[0]}_decimate{reduction_percent}_{timestamp}.obj"
+        output_path = os.path.join(MODEL_FOLDER, new_filename)
+        
+        # Decimate the mesh
+        success, stats = decimate_mesh(temp_input, output_path, target_reduction, method)
+        
+        if not success:
+            return render_template_string('''
+            <!doctype html>
+            <html>
+            <head>
+                <title>Decimation Error</title>
+                <style>
+                    body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+                    .container { max-width: 700px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+                    h1 { color: #e53e3e; }
+                    p { color: #4a5568; margin-bottom: 25px; }
+                    .error-icon { font-size: 60px; color: #e53e3e; margin: 20px 0; }
+                    button { background: #4299e1; color: white; border: none; padding: 12px 18px; cursor: pointer; border-radius: 8px; margin: 8px; font-weight: 600; transition: all 0.3s ease; }
+                    button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="error-icon">❌</div>
+                    <h1>Decimation Failed</h1>
+                    <p>There was an error decimating the mesh. This could be due to:</p>
+                    <ul style="text-align: left;">
+                        <li>Input file is not a valid mesh</li>
+                        <li>Mesh has topology issues that prevent decimation</li>
+                        <li>Server processing error</li>
+                    </ul>
+                    <p>Try with a different model or different decimation settings.</p>
+                    <p style="color: #e53e3e; font-weight: bold;">{{ error }}</p>
+                    <a href="/process_mesh/{{ filename }}"><button>Back to Processing Options</button></a>
+                </div>
+            </body>
+            </html>
+            ''', filename=filename, error=stats.get("error", "Unknown error"))
+        
+        # If successful, load the new mesh file and save to MongoDB
+        with open(output_path, 'rb') as f:
+            mesh_data = f.read()
+        
+        # Save to MongoDB
+        new_model = {
+            "filename": new_filename,
+            "name": f"Decimated {filename} ({reduction_percent}%)",
+            "data": mesh_data,
+            "created_at": datetime.datetime.now(),
+            "source_model": filename,
+            "decimation_stats": stats,
+            "decimation_method": method,
+            "target_reduction": target_reduction,
+            "point_count": stats["vertices_after"],
+            "processed": True
+        }
+        
+        models_collection.insert_one(new_model)
+        
+        # Clean up temporary files
+        try:
+            import shutil
+            shutil.rmtree(temp_dir)
+        except:
+            pass
+        
+        # Success page
+        return render_template_string('''
+        <!doctype html>
+        <html>
+        <head>
+            <title>Decimation Complete</title>
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+                .container { max-width: 700px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+                h1 { color: #38a169; }
+                p { color: #4a5568; margin-bottom: 25px; }
+                .success-icon { font-size: 60px; color: #38a169; margin: 20px 0; }
+                button { background: #4299e1; color: white; border: none; padding: 12px 18px; cursor: pointer; border-radius: 8px; margin: 8px; font-weight: 600; transition: all 0.3s ease; }
+                button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+                .stats-table { margin: 20px auto; border-collapse: collapse; width: 80%; }
+                .stats-table th, .stats-table td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+                .stats-table th { background-color: #f2f2f2; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="success-icon">✓</div>
+                <h1>Decimation Complete</h1>
+                <p>The mesh was successfully decimated.</p>
+                
+                <table class="stats-table">
+                    <tr>
+                        <th></th>
+                        <th>Before</th>
+                        <th>After</th>
+                        <th>Reduction</th>
+                    </tr>
+                    <tr>
+                        <td><strong>Vertices</strong></td>
+                        <td>{{ stats.vertices_before }}</td>
+                        <td>{{ stats.vertices_after }}</td>
+                        <td>{{ "%.1f"|format(stats.vertex_reduction * 100) }}%</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Faces</strong></td>
+                        <td>{{ stats.faces_before }}</td>
+                        <td>{{ stats.faces_after }}</td>
+                        <td>{{ "%.1f"|format(stats.face_reduction * 100) }}%</td>
+                    </tr>
+                </table>
+                
+                <div>
+                    <a href="/model_view/{{ new_filename }}"><button>View Decimated Mesh</button></a>
+                    <a href="/models"><button>All Models</button></a>
+                </div>
+            </div>
+        </body>
+        </html>
+        ''', new_filename=new_filename, stats=stats)
+    
+    except Exception as e:
+        logger.error(f"Error in mesh decimation: {str(e)}")
+        return jsonify({"error": str(e)}), 500
     
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
