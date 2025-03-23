@@ -61,6 +61,14 @@ else
         -c "cd /app/TFGDBA && python3 app.py"
 fi
 
+# Install dependencies inside the container
+echo "Installing required dependencies..."
+sudo docker exec tfgdba-instance pip install open3d pymeshlab trimesh
+
+# Restart the container to pick up new dependencies
+echo "Restarting container to apply dependency changes..."
+sudo docker restart tfgdba-instance
+
 # Wait for container to initialize
 echo "Waiting for the application to initialize..."
 sleep 5
