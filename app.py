@@ -24,6 +24,7 @@ import pymeshlab
 import open3d as o3d
 import plotly.graph_objects as go
 from sklearn.cluster import DBSCAN
+import traceback
 
 from model_analysis import (
     load_meshes, 
