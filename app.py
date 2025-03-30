@@ -2882,8 +2882,8 @@ def api_analyze_model_damage():
                     elif isinstance(value, list):
                         trace_dict[key] = [
                             item.tolist() if isinstance(item, np.ndarray) 
-                            else (int(item) if isinstance(item, (np.int_, np.int32, np.int64))
-                                 else (float(item) if isinstance(item, (np.float_, np.float32, np.float64))
+                            else (int(item) if isinstance(item, (np.int32, np.int64))
+                                 else (float(item) if isinstance(item, (np.float32, np.float64))
                                       else item))
                             for item in value
                         ]
