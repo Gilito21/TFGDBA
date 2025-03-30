@@ -1,4 +1,11 @@
 # Function to load meshes
+
+import numpy as np
+import trimesh
+import plotly.graph_objects as go
+from sklearn.cluster import DBSCAN
+import os
+
 def load_meshes(original_path='porsche_original.obj', damaged_path='porsche_damaged.obj'):
     try:
         # Check if files exist
