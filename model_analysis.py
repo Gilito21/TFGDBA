@@ -210,6 +210,7 @@ def create_improved_visualization(mesh_original, mesh_damaged, distances, damage
     ))
 
     # Add the damaged mesh with color based on damage intensity
+    # Fixed colorbar - using title as a dict with text and side properties
     fig.add_trace(go.Mesh3d(
         x=mesh_damaged.vertices[:, 0],
         y=mesh_damaged.vertices[:, 1],
@@ -223,8 +224,10 @@ def create_improved_visualization(mesh_original, mesh_damaged, distances, damage
         name='Damaged Mesh',
         showscale=True,
         colorbar=dict(
-            title='Deformation',
-            titleside='right',
+            title=dict(
+                text='Deformation',
+                side='right'
+            ),
             thickness=20,
             len=0.6,
             y=0.5
