@@ -184,17 +184,31 @@ def upload_form():
 
             <div class="divider"></div>
             
-            <!-- OBJ Upload Section -->
-            <h2>Upload OBJ Files Directly</h2>
-            <p class="description">Already have 3D models? Upload OBJ files directly to your collection.</p>
-            
-            <form action="/upload_obj" method="post" enctype="multipart/form-data">
-                <div class="options">
-                    <input type="file" name="obj_file" accept=".obj" required><br>
-                    <input type="text" name="model_name" placeholder="Model name (optional)" style="padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0; margin: 10px 0; width: 200px;">
+            <!-- Model Analysis Section -->
+            <div style="padding: 30px; background-color: #f8fafc; border-radius: 10px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); margin-bottom: 30px;">
+                <h2 style="color: #2d3748; margin-bottom: 15px;">Analyze 3D Model Differences</h2>
+                <p style="color: #4a5568; margin-bottom: 25px; font-size: 1.1em;">Compare Porsche model files to detect and visualize damage using advanced 3D analysis.</p>
+                
+                <div style="display: flex; justify-content: space-between; margin: 30px 0; flex-wrap: wrap; gap: 20px;">
+                    <div style="flex: 1; min-width: 200px; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); text-align: center; transition: transform 0.3s ease, box-shadow 0.3s ease;">
+                        <div style="font-size: 2.5em; margin-bottom: 15px;">📊</div>
+                        <h3 style="color: #2d3748; margin-bottom: 10px;">Damage Detection</h3>
+                        <p style="color: #718096; font-size: 0.9em;">Automatically detect and highlight damaged areas on 3D models</p>
+                    </div>
+                    <div style="flex: 1; min-width: 200px; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); text-align: center; transition: transform 0.3s ease, box-shadow 0.3s ease;">
+                        <div style="font-size: 2.5em; margin-bottom: 15px;">🔍</div>
+                        <h3 style="color: #2d3748; margin-bottom: 10px;">Detailed Visualization</h3>
+                        <p style="color: #718096; font-size: 0.9em;">Interactive 3D visualization with multiple view options</p>
+                    </div>
+                    <div style="flex: 1; min-width: 200px; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); text-align: center; transition: transform 0.3s ease, box-shadow 0.3s ease;">
+                        <div style="font-size: 2.5em; margin-bottom: 15px;">📋</div>
+                        <h3 style="color: #2d3748; margin-bottom: 10px;">Damage Reports</h3>
+                        <p style="color: #718096; font-size: 0.9em;">Get comprehensive damage statistics and measurements</p>
+                    </div>
                 </div>
-                <input type="submit" value="Upload OBJ File" style="background: #48bb78;">
-            </form>
+                
+                <a href="/select_models_to_compare" style="display: inline-block; background-color: #4299e1; color: white; padding: 12px 24px; border-radius: 8px; font-weight: bold; text-decoration: none; margin-top: 20px; transition: all 0.3s ease; border: none; cursor: pointer; font-size: 1.1em; text-align: center;">Compare Porsche Models</a>
+            </div>
         </div>
     </body>
     </html>
