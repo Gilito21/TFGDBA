@@ -22,6 +22,8 @@ import subprocess
 import logging
 import pymeshlab
 import open3d as o3d
+import plotly.graph_objects as go
+from sklearn.cluster import DBSCAN
 app = Flask(__name__)
 
 UPLOAD_FOLDER = "uploads"
@@ -2010,1043 +2012,593 @@ def view_model_3d(filename):
 
 # First, add this new route to your Flask application
 
-@app.route('/compare_models/<model1_filename>/<model2_filename>')
-def compare_models(model1_filename, model2_filename):
-    """
-    Compare two 3D models side by side using Three.js
-    """
-    # Get model data from MongoDB
-    model1_data = models_collection.find_one({"filename": model1_filename})
-    model2_data = models_collection.find_one({"filename": model2_filename})
-    
-    if not model1_data or not model2_data:
-        return "One or both models not found", 404
-    
-    # Format the creation dates
-    model1_created = model1_data["created_at"].strftime('%Y-%m-%d %H:%M')
-    model2_created = model2_data["created_at"].strftime('%Y-%m-%d %H:%M')
-    
-    # Get model information for display
-    model1_info = {
-        "name": model1_filename,
-        "point_count": model1_data.get("point_count", "N/A"),
-        "created_at": model1_created
-    }
-    
-    model2_info = {
-        "name": model2_filename,
-        "point_count": model2_data.get("point_count", "N/A"),
-        "created_at": model2_created
-    }
-    
+@app.route('/compare_models/<string:model1>/<string:model2>')
+def compare_models(model1, model2):
+    """Compare two 3D models and visualize their differences using Plotly"""
+    # Validate that models exist
+    if model1 not in ["porsche_original.obj", "porsche_damaged.obj"] or \
+       model2 not in ["porsche_original.obj", "porsche_damaged.obj"]:
+        return render_template_string('''
+        <!doctype html>
+        <html>
+        <head>
+            <title>Invalid Models</title>
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+                .container { max-width: 800px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+                h1 { color: #e53e3e; }
+                p { color: #4a5568; margin-bottom: 25px; }
+                .back-link { display: inline-block; margin-top: 20px; color: #4299e1; text-decoration: none; }
+                .back-link:hover { text-decoration: underline; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Invalid Model Selection</h1>
+                <p>Only Porsche models (porsche_original.obj and porsche_damaged.obj) can be compared.</p>
+                <a href="/select_models_to_compare" class="back-link">Back to Model Selection</a>
+            </div>
+        </body>
+        </html>
+        ''')
+
+    # Get file paths from DB
+    model1_info = models_collection.find_one({"filename": model1})
+    model2_info = models_collection.find_one({"filename": model2})
+
+    if not model1_info or not model2_info:
+        return render_template_string('''
+        <!doctype html>
+        <html>
+        <head>
+            <title>Models Not Found</title>
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+                .container { max-width: 800px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+                h1 { color: #e53e3e; }
+                p { color: #4a5568; margin-bottom: 25px; }
+                .back-link { display: inline-block; margin-top: 20px; color: #4299e1; text-decoration: none; }
+                .back-link:hover { text-decoration: underline; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Models Not Found in Database</h1>
+                <p>One or both of the selected models could not be found in the database.</p>
+                <a href="/select_models_to_compare" class="back-link">Back to Model Selection</a>
+            </div>
+        </body>
+        </html>
+        ''')
+
+    # Get file paths
+    model1_path = model1_info.get("filepath", "")
+    model2_path = model2_info.get("filepath", "")
+
+    # Determine which is original and which is damaged for proper analysis
+    if "original" in model1.lower():
+        original_path = model1_path
+        damaged_path = model2_path
+        original_name = model1
+        damaged_name = model2
+    else:
+        original_path = model2_path
+        damaged_path = model1_path
+        original_name = model2
+        damaged_name = model1
+
+    # Render the comparison page
     return render_template_string('''
     <!doctype html>
     <html>
     <head>
-        <title>3D Model Comparison</title>
+        <title>3D Model Damage Analysis</title>
+        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
         <style>
-            body { 
-                margin: 0; 
-                padding: 0; 
-                overflow: hidden; 
+            body {
                 font-family: Arial, sans-serif;
-                background-color: #111;
-                color: #fff;
+                margin: 0;
+                padding: 0;
+                background-color: #f8f9fa;
             }
-            .viewport-container {
-                display: flex;
-                width: 100%;
-                height: 100vh;
-            }
-            .viewport {
-                flex: 1;
-                position: relative;
-            }
-            .viewport-title {
-                position: absolute;
-                top: 10px;
-                left: 0;
-                right: 0;
-                text-align: center;
+            .header {
+                background-color: #2c3e50;
                 color: white;
-                font-weight: bold;
-                z-index: 10;
-                background-color: rgba(0,0,0,0.5);
-                padding: 5px 0;
+                padding: 20px;
+                text-align: center;
             }
-            .comparison-view {
-                position: absolute;
-                width: 100%;
-                height: 50px;
-                bottom: 0;
-                background-color: rgba(0,0,0,0.7);
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                z-index: 100;
+            .container {
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 20px;
             }
-            .controls {
-                position: absolute;
-                top: 60px;
-                left: 50%;
-                transform: translateX(-50%);
-                background: rgba(0,0,0,0.7);
-                padding: 10px 20px;
-                border-radius: 10px;
+            .visualization-container {
+                background-color: white;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                padding: 20px;
+                margin-bottom: 20px;
+            }
+            .analysis-container {
                 display: flex;
                 flex-wrap: wrap;
-                justify-content: center;
-                gap: 10px;
-                z-index: 100;
-                max-width: 80%;
+                gap: 20px;
             }
-            .controls button {
-                padding: 8px 15px;
-                background: #4299e1;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                cursor: pointer;
-                font-weight: bold;
-                transition: all 0.3s ease;
-            }
-            .controls button:hover {
-                background: #3182ce;
-            }
-            .info-panel {
-                position: absolute;
-                top: 20px;
-                right: 20px;
-                background: rgba(0,0,0,0.7);
-                color: white;
-                padding: 15px;
-                border-radius: 10px;
-                max-width: 300px;
-                font-size: 14px;
-                z-index: 100;
+            .analysis-panel {
+                flex: 1;
+                min-width: 300px;
+                background-color: white;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                padding: 20px;
             }
             .loading {
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                color: white;
-                background: rgba(0,0,0,0.7);
-                padding: 20px 40px;
-                border-radius: 10px;
-                font-size: 18px;
-                z-index: 200;
+                text-align: center;
+                padding: 50px;
+                font-size: 20px;
+                color: #666;
             }
-            .back-button {
-                position: absolute;
-                top: 20px;
-                left: 20px;
-                z-index: 100;
-                padding: 10px 15px;
-                background: #4299e1;
-                color: white;
+            .button-container {
+                margin: 20px 0;
+                text-align: center;
+            }
+            .btn {
+                padding: 10px 20px;
+                margin: 0 10px;
                 border: none;
                 border-radius: 5px;
-                cursor: pointer;
-                font-weight: bold;
-                text-decoration: none;
-                transition: all 0.3s ease;
-            }
-            .back-button:hover {
-                background: #3182ce;
-            }
-            .download-btn {
-                background: #48bb78;
-            }
-            .download-btn:hover {
-                background: #38a169;
-            }
-            .sync-view-indicator {
-                position: absolute;
-                top: 60px;
-                right: 20px;
-                background: rgba(0,0,0,0.7);
+                background-color: #3498db;
                 color: white;
-                padding: 5px 10px;
-                border-radius: 5px;
-                font-size: 12px;
-                z-index: 100;
-            }
-            .toggle-btn {
-                width: 60px;
-                height: 30px;
-                border-radius: 15px;
-                background: #4a5568;
-                position: relative;
+                font-size: 16px;
                 cursor: pointer;
                 transition: background-color 0.3s;
             }
-            .toggle-btn.active {
-                background: #48bb78;
+            .btn:hover {
+                background-color: #2980b9;
             }
-            .toggle-btn::after {
-                content: '';
-                position: absolute;
-                width: 24px;
-                height: 24px;
-                background: white;
-                border-radius: 50%;
-                top: 3px;
-                left: 3px;
-                transition: transform 0.3s;
+            .btn-secondary {
+                background-color: #95a5a6;
             }
-            .toggle-btn.active::after {
-                transform: translateX(30px);
+            .btn-secondary:hover {
+                background-color: #7f8c8d;
             }
-            .comparison-controls {
-                display: flex;
-                gap: 20px;
-                align-items: center;
+            .damage-stat {
+                margin-bottom: 15px;
             }
-            .comparison-controls span {
-                font-size: 14px;
-            }
-            .difference-view {
-                position: absolute;
-                width: 100%;
-                height: 100%;
-                top: 0;
-                left: 0;
-                z-index: 50;
-                display: none;
-            }
-            .view-mode-controls {
-                position: absolute;
-                bottom: 20px;
-                left: 50%;
-                transform: translateX(-50%);
-                background: rgba(0,0,0,0.7);
-                padding: 10px;
-                border-radius: 10px;
-                display: flex;
-                gap: 10px;
-                z-index: 110;
-            }
-            .view-mode-btn {
-                padding: 8px 15px;
-                border-radius: 5px;
-                cursor: pointer;
-                font-weight: bold;
-                transition: all 0.3s ease;
-                background: #4a5568;
-                color: white;
-                border: none;
-            }
-            .view-mode-btn.active {
-                background: #48bb78;
-            }
-            .color-legend {
-                position: absolute;
-                bottom: 80px;
-                right: 20px;
-                background: rgba(0,0,0,0.7);
-                padding: 15px;
-                border-radius: 10px;
-                z-index: 100;
-                font-size: 14px;
-            }
-            .legend-item {
-                display: flex;
-                align-items: center;
+            .damage-stat h3 {
                 margin-bottom: 5px;
+                color: #2c3e50;
             }
-            .legend-color {
-                width: 20px;
-                height: 20px;
-                border-radius: 3px;
-                margin-right: 10px;
+            .damage-stat p {
+                margin: 0;
+                color: #7f8c8d;
+            }
+            .severity-badge {
+                display: inline-block;
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: bold;
+                color: white;
+            }
+            .severity-severe {
+                background-color: #e74c3c;
+            }
+            .severity-moderate {
+                background-color: #f39c12;
+            }
+            .severity-mild {
+                background-color: #2ecc71;
+            }
+            #plotlyVisualization {
+                height: 600px;
+                width: 100%;
+            }
+            .damage-summary-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 20px;
+            }
+            .damage-summary-table th,
+            .damage-summary-table td {
+                border: 1px solid #ddd;
+                padding: 8px;
+                text-align: left;
+            }
+            .damage-summary-table th {
+                background-color: #f2f2f2;
+            }
+            .damage-summary-table tr:nth-child(even) {
+                background-color: #f9f9f9;
+            }
+            .back-link {
+                display: inline-block;
+                margin-top: 20px;
+                color: #3498db;
+                text-decoration: none;
+            }
+            .back-link:hover {
+                text-decoration: underline;
             }
         </style>
     </head>
     <body>
-        <div class="viewport-container">
-            <div id="viewport1" class="viewport">
-                <div class="viewport-title">Original Model</div>
-                <div id="loading1" class="loading">Loading original model...</div>
-            </div>
-            <div id="viewport2" class="viewport">
-                <div class="viewport-title">Damaged Model</div>
-                <div id="loading2" class="loading">Loading damaged model...</div>
-            </div>
-            <div id="differenceView" class="difference-view">
-                <div class="viewport-title">Difference Visualization</div>
-                <div id="loading3" class="loading">Calculating differences...</div>
-            </div>
+        <div class="header">
+            <h1>3D Model Damage Analysis</h1>
+            <p>Comparing {{ original_name }} with {{ damaged_name }}</p>
         </div>
         
-        <a href="/models" class="back-button">Back to Models</a>
-        
-        <div class="controls">
-            <button id="wireframe">Toggle Wireframe</button>
-            <button id="rotate">Pause Rotation</button>
-            <button id="resetView">Reset View</button>
-            <button id="flipX">Flip X</button>
-            <button id="flipY">Flip Y</button>
-            <button id="flipZ">Flip Z</button>
-            <button id="downloadOriginal" class="download-btn">Download Original</button>
-            <button id="downloadDamaged" class="download-btn">Download Damaged</button>
+        <div class="container">
+            <div class="visualization-container">
+                <div id="plotlyVisualization" class="loading">
+                    <p>Loading visualization...</p>
+                </div>
+            </div>
+            
+            <div class="button-container">
+                <button id="btnDamagedOnly" class="btn">Damaged Model Only</button>
+                <button id="btnOriginalOnly" class="btn">Original Model Only</button>
+                <button id="btnBothModels" class="btn">Both Models</button>
+                <button id="btnDamageAreas" class="btn">Damage Areas Only</button>
+                <button id="btnOriginalWithDamage" class="btn">Original + Damage Areas</button>
+                <button id="btnDamagedWithDamage" class="btn">Damaged + Damage Areas</button>
+            </div>
+            
+            <div class="analysis-container">
+                <div class="analysis-panel">
+                    <h2>Damage Analysis Summary</h2>
+                    <div id="damageSummary" class="loading">
+                        <p>Analyzing damage patterns...</p>
+                    </div>
+                </div>
+                
+                <div class="analysis-panel">
+                    <h2>Detailed Damage Information</h2>
+                    <div id="damageDetails" class="loading">
+                        <p>Calculating damage metrics...</p>
+                    </div>
+                </div>
+            </div>
+            
+            <a href="/select_models_to_compare" class="back-link">← Back to Model Selection</a>
         </div>
         
-        <div class="sync-view-indicator">
-            <div class="comparison-controls">
-                <span>Sync Views</span>
-                <div id="syncToggle" class="toggle-btn active"></div>
-            </div>
-        </div>
-        
-        <div class="view-mode-controls">
-            <button id="sideBySideBtn" class="view-mode-btn active">Side by Side</button>
-            <button id="differenceBtn" class="view-mode-btn">Difference View</button>
-            <button id="overlayBtn" class="view-mode-btn">Overlay View</button>
-        </div>
-
-        <div class="color-legend" id="colorLegend" style="display: none;">
-            <h4 style="margin-top: 0;">Difference Scale</h4>
-            <div class="legend-item">
-                <div class="legend-color" style="background-color: #0000ff;"></div>
-                <span>No Difference</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-color" style="background-color: #00ff00;"></div>
-                <span>Minor Difference</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-color" style="background-color: #ffff00;"></div>
-                <span>Moderate Difference</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-color" style="background-color: #ff0000;"></div>
-                <span>Major Difference</span>
-            </div>
-        </div>
-        
-        <div class="info-panel">
-            <h3 style="margin-top: 0;">Model Information</h3>
-            <h4>Original Model</h4>
-            <p><strong>Name:</strong> {{ model1.name }}</p>
-            <p><strong>Points:</strong> {{ model1.point_count }}</p>
-            <p><strong>Created:</strong> {{ model1.created_at }}</p>
-            <h4>Damaged Model</h4>
-            <p><strong>Name:</strong> {{ model2.name }}</p>
-            <p><strong>Points:</strong> {{ model2.point_count }}</p>
-            <p><strong>Created:</strong> {{ model2.created_at }}</p>
-        </div>
-
-        <!-- THREE.js libraries -->
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/PLYLoader.js"></script>
-
         <script>
-            // Model filenames
-            const model1Filename = '{{ model1.name }}';
-            const model2Filename = '{{ model2.name }}';
-            
-            // URLs to fetch models
-            const model1URL = '/model/' + model1Filename;
-            const model2URL = '/model/' + model2Filename;
-            
-            // View options
-            let isRotating = true;
-            let isSyncedView = true;
-            let wireframeEnabled = false;
-            
-            // State for both models
-            let model1, model2;
-            let modelGroup1, modelGroup2;
-            let scene1, scene2, diffScene;
-            let camera1, camera2, diffCamera;
-            let controls1, controls2, diffControls;
-            let renderer1, renderer2, diffRenderer;
-            
-            // Initialize renderers
-            renderer1 = new THREE.WebGLRenderer({ antialias: true });
-            renderer1.setSize(window.innerWidth / 2, window.innerHeight);
-            document.getElementById('viewport1').appendChild(renderer1.domElement);
-            
-            renderer2 = new THREE.WebGLRenderer({ antialias: true });
-            renderer2.setSize(window.innerWidth / 2, window.innerHeight);
-            document.getElementById('viewport2').appendChild(renderer2.domElement);
-            
-            diffRenderer = new THREE.WebGLRenderer({ antialias: true });
-            diffRenderer.setSize(window.innerWidth, window.innerHeight);
-            document.getElementById('differenceView').appendChild(diffRenderer.domElement);
-            
-            // Set up scenes
-            scene1 = new THREE.Scene();
-            scene1.background = new THREE.Color(0x111111);
-            
-            scene2 = new THREE.Scene();
-            scene2.background = new THREE.Color(0x111111);
-            
-            diffScene = new THREE.Scene();
-            diffScene.background = new THREE.Color(0x111111);
-            
-            // Set up cameras
-            camera1 = new THREE.PerspectiveCamera(75, window.innerWidth / 2 / window.innerHeight, 0.1, 1000);
-            camera1.position.z = 5;
-            
-            camera2 = new THREE.PerspectiveCamera(75, window.innerWidth / 2 / window.innerHeight, 0.1, 1000);
-            camera2.position.z = 5;
-            
-            diffCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            diffCamera.position.z = 5;
-            
-            // Add lighting to scenes
-            function addLighting(scene) {
-                const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-                scene.add(ambientLight);
+            // Function to process the damage data and update UI
+            function updateDamageSummary(data) {
+                const summaryElement = document.getElementById('damageSummary');
+                const detailsElement = document.getElementById('damageDetails');
                 
-                const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-                directionalLight.position.set(1, 1, 1);
-                scene.add(directionalLight);
+                if (!data || !data.damage_clusters || data.damage_clusters.length === 0) {
+                    summaryElement.innerHTML = '<p>No significant damage detected between the models.</p>';
+                    detailsElement.innerHTML = '<p>No detailed damage information available.</p>';
+                    return;
+                }
                 
-                const backLight = new THREE.DirectionalLight(0xffffff, 0.5);
-                backLight.position.set(-1, -1, -1);
-                scene.add(backLight);
-            }
-            
-            addLighting(scene1);
-            addLighting(scene2);
-            addLighting(diffScene);
-            
-            // Add orbit controls
-            controls1 = new THREE.OrbitControls(camera1, renderer1.domElement);
-            controls1.enableDamping = true;
-            controls1.dampingFactor = 0.05;
-            
-            controls2 = new THREE.OrbitControls(camera2, renderer2.domElement);
-            controls2.enableDamping = true;
-            controls2.dampingFactor = 0.05;
-            
-            diffControls = new THREE.OrbitControls(diffCamera, diffRenderer.domElement);
-            diffControls.enableDamping = true;
-            diffControls.dampingFactor = 0.05;
-            
-            // Create model groups
-            modelGroup1 = new THREE.Group();
-            scene1.add(modelGroup1);
-            
-            modelGroup2 = new THREE.Group();
-            scene2.add(modelGroup2);
-            
-            // Create a group for difference visualization
-            const diffGroup = new THREE.Group();
-            diffScene.add(diffGroup);
-            
-            // Load models
-            function loadModel(url, sceneNum) {
-                const loader = new THREE.OBJLoader();
+                // Calculate overall statistics
+                const totalClusters = data.damage_clusters.length;
+                const totalAffectedPoints = data.damage_clusters.reduce((sum, cluster) => sum + cluster.size, 0);
+                const pctAffected = (totalAffectedPoints / data.total_vertices * 100).toFixed(2);
                 
-                return new Promise((resolve, reject) => {
-                    loader.load(
-                        url,
-                        (loadedModel) => {
-                            // Process model
-                            loadedModel.traverse((child) => {
-                                if (child.isMesh) {
-                                    // Different colors for the two models
-                                    const color = sceneNum === 1 ? 0x4299e1 : 0x48bb78;
-                                    child.material = new THREE.MeshPhongMaterial({
-                                        color: color,
-                                        specular: 0x111111,
-                                        shininess: 30,
-                                        flatShading: true
-                                    });
-                                }
-                            });
-                            
-                            resolve(loadedModel);
-                        },
-                        (xhr) => {
-                            if (xhr.lengthComputable) {
-                                const percentComplete = Math.round((xhr.loaded / xhr.total) * 100);
-                                document.getElementById(`loading${sceneNum}`).textContent = 
-                                    `Loading model... ${percentComplete}%`;
-                            }
-                        },
-                        (error) => {
-                            document.getElementById(`loading${sceneNum}`).textContent = 
-                                `Error loading model: ${error.message || 'Unknown error'}`;
-                            reject(error);
-                        }
-                    );
+                const severeClusters = data.damage_clusters.filter(c => c.severity === 'Severe').length;
+                const moderateClusters = data.damage_clusters.filter(c => c.severity === 'Moderate').length;
+                const mildClusters = data.damage_clusters.filter(c => c.severity === 'Mild').length;
+                
+                // Update summary panel
+                let summaryHTML = `
+                    <div class="damage-stat">
+                        <h3>Total Damage Clusters</h3>
+                        <p>${totalClusters} distinct damage areas detected</p>
+                    </div>
+                    <div class="damage-stat">
+                        <h3>Affected Surface Area</h3>
+                        <p>${totalAffectedPoints} vertices (${pctAffected}% of model)</p>
+                    </div>
+                    <div class="damage-stat">
+                        <h3>Damage Severity Distribution</h3>
+                        <p>
+                            <span class="severity-badge severity-severe">${severeClusters} Severe</span>
+                            <span class="severity-badge severity-moderate">${moderateClusters} Moderate</span>
+                            <span class="severity-badge severity-mild">${mildClusters} Mild</span>
+                        </p>
+                    </div>
+                `;
+                
+                // Add damage summary table
+                summaryHTML += `
+                    <table class="damage-summary-table">
+                        <tr>
+                            <th>Damage Area</th>
+                            <th>Severity</th>
+                            <th>Size</th>
+                            <th>Max Deformation</th>
+                        </tr>
+                `;
+                
+                data.damage_clusters.forEach(cluster => {
+                    const severityClass = cluster.severity === 'Severe' ? 'severity-severe' : 
+                                         (cluster.severity === 'Moderate' ? 'severity-moderate' : 'severity-mild');
+                    
+                    summaryHTML += `
+                        <tr>
+                            <td>Area ${cluster.id}</td>
+                            <td><span class="severity-badge ${severityClass}">${cluster.severity}</span></td>
+                            <td>${cluster.size} vertices</td>
+                            <td>${cluster.max_damage.toFixed(4)}</td>
+                        </tr>
+                    `;
                 });
+                
+                summaryHTML += '</table>';
+                summaryElement.innerHTML = summaryHTML;
+                
+                // Update details panel
+                let detailsHTML = '';
+                data.damage_clusters.forEach(cluster => {
+                    const severityClass = cluster.severity === 'Severe' ? 'severity-severe' : 
+                                         (cluster.severity === 'Moderate' ? 'severity-moderate' : 'severity-mild');
+                    
+                    detailsHTML += `
+                        <div class="damage-stat">
+                            <h3>Damage Area ${cluster.id} <span class="severity-badge ${severityClass}">${cluster.severity}</span></h3>
+                            <p><strong>Location:</strong> X: ${cluster.center[0].toFixed(2)}, Y: ${cluster.center[1].toFixed(2)}, Z: ${cluster.center[2].toFixed(2)}</p>
+                            <p><strong>Size:</strong> ${cluster.size} vertices</p>
+                            <p><strong>Max Deformation:</strong> ${cluster.max_damage.toFixed(4)}</p>
+                            <p><strong>Avg Deformation:</strong> ${cluster.avg_damage.toFixed(4)}</p>
+                            <p><strong>Approx. Volume:</strong> ${cluster.volume.toFixed(4)}</p>
+                            <p><strong>Approx. Surface Area:</strong> ${cluster.surface_area.toFixed(4)}</p>
+                        </div>
+                    `;
+                });
+                
+                detailsElement.innerHTML = detailsHTML;
             }
             
-            // Process and display model
-            function processModel(loadedModel, sceneNum) {
-                // Get the appropriate group and scene elements based on the scene number
-                const modelGroup = sceneNum === 1 ? modelGroup1 : modelGroup2;
-                
-                // Center the model
-                const bbox = new THREE.Box3().setFromObject(loadedModel);
-                const center = bbox.getCenter(new THREE.Vector3());
-                
-                // Position model so the center is at origin
-                loadedModel.position.x = -center.x;
-                loadedModel.position.y = -center.y;
-                loadedModel.position.z = -center.z;
-                
-                // Add to the group
-                modelGroup.add(loadedModel);
-                
-                // Hide loading indicator
-                document.getElementById(`loading${sceneNum}`).style.display = 'none';
-                
-                return loadedModel;
-            }
-            
-            // Load both models
-            Promise.all([
-                loadModel(model1URL, 1).then(model => {
-                    model1 = processModel(model, 1);
-                    return model1;
+            // Fetch and process the data
+            $.ajax({
+                url: '/api/analyze_model_damage',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    original_path: '{{ original_path }}',
+                    damaged_path: '{{ damaged_path }}'
                 }),
-                loadModel(model2URL, 2).then(model => {
-                    model2 = processModel(model, 2);
-                    return model2;
-                })
-            ]).then(() => {
-                console.log("Both models loaded successfully");
-                
-                // Calculate the appropriate camera distance based on model sizes
-                const bbox1 = new THREE.Box3().setFromObject(model1);
-                const bbox2 = new THREE.Box3().setFromObject(model2);
-                
-                // Use the larger of the two bounding boxes
-                const size1 = bbox1.getSize(new THREE.Vector3());
-                const size2 = bbox2.getSize(new THREE.Vector3());
-                
-                const maxDim1 = Math.max(size1.x, size1.y, size1.z);
-                const maxDim2 = Math.max(size2.x, size2.y, size2.z);
-                const maxDim = Math.max(maxDim1, maxDim2);
-                
-                // Calculate camera distance
-                const fov = camera1.fov * (Math.PI / 180);
-                let cameraDistance = maxDim / (2 * Math.tan(fov / 2)) * 1.5;
-                
-                // Apply to all cameras
-                camera1.position.z = cameraDistance;
-                camera2.position.z = cameraDistance;
-                diffCamera.position.z = cameraDistance;
-                
-                // Generate difference visualization
-                generateDifferenceVisualization();
-                
-            }).catch(error => {
-                console.error("Error loading models:", error);
-            });
-            
-            // Function to generate difference visualization
-            function generateDifferenceVisualization() {
-                try {
-                    document.getElementById('loading3').textContent = 'Calculating differences...';
+                success: function(response) {
+                    // Update the loading visualization with the actual plot
+                    document.getElementById('plotlyVisualization').innerHTML = '';
+                    Plotly.newPlot('plotlyVisualization', response.plot_data, response.plot_layout);
                     
-                    // Clone the models for the difference scene
-                    const model1Clone = model1.clone();
-                    const model2Clone = model2.clone();
+                    // Update damage information
+                    updateDamageSummary(response);
                     
-                    // Extract vertex data from both models
-                    const vertices1 = extractVertices(model1Clone);
-                    const vertices2 = extractVertices(model2Clone);
-                    
-                    // Check if models have compatible vertex counts
-                    if (vertices1.length !== vertices2.length) {
-                        document.getElementById('loading3').textContent = 
-                            'Models have different vertex counts - cannot generate accurate difference visualization';
-                        return;
-                    }
-                    
-                    // Calculate distances between corresponding vertices
-                    const distances = [];
-                    const maxDistances = [];
-                    for (let i = 0; i < vertices1.length; i++) {
-                        const v1 = vertices1[i];
-                        const v2 = vertices2[i];
-                        
-                        const dx = v1.x - v2.x;
-                        const dy = v1.y - v2.y;
-                        const dz = v1.z - v2.z;
-                        
-                        const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                        distances.push(distance);
-                        maxDistances.push(distance);
-                    }
-                    
-                    // Sort for calculating thresholds
-                    maxDistances.sort((a, b) => b - a);
-                    
-                    // Calculate thresholds using percentiles
-                    const maxDiff = maxDistances[0];
-                    const highThreshold = maxDistances[Math.floor(maxDistances.length * 0.01)] || maxDiff; // Top 1%
-                    const mediumThreshold = maxDistances[Math.floor(maxDistances.length * 0.05)] || maxDiff * 0.5; // Top 5%
-                    const lowThreshold = maxDistances[Math.floor(maxDistances.length * 0.1)] || maxDiff * 0.25; // Top 10%
-                    
-                    console.log(`Difference thresholds - High: ${highThreshold}, Medium: ${mediumThreshold}, Low: ${lowThreshold}`);
-                    
-                    // Apply color mapping to the damage model
-                    applyDifferenceColors(model2Clone, distances, lowThreshold, mediumThreshold, highThreshold);
-                    
-                    // Add to the difference scene
-                    diffGroup.add(model2Clone);
-                    
-                    // Add wireframe of the original model
-                    const wireframeMaterial = new THREE.LineBasicMaterial({ 
-                        color: 0x4299e1, 
-                        transparent: true, 
-                        opacity: 0.3 
+                    // Setup buttons for changing views
+                    document.getElementById('btnDamagedOnly').addEventListener('click', function() {
+                        Plotly.update('plotlyVisualization', 
+                            {'visible': response.view_settings.damaged_only_vis},
+                            {'title': 'Damage Analysis - Damaged Mesh Only'});
                     });
                     
-                    model1Clone.traverse((child) => {
-                        if (child.isMesh) {
-                            const wireframe = new THREE.LineSegments(
-                                new THREE.WireframeGeometry(child.geometry),
-                                wireframeMaterial
-                            );
-                            diffGroup.add(wireframe);
-                        }
+                    document.getElementById('btnOriginalOnly').addEventListener('click', function() {
+                        Plotly.update('plotlyVisualization',
+                            {'visible': response.view_settings.original_only_vis},
+                            {'title': 'Damage Analysis - Original Mesh Only'});
                     });
                     
-                    // Hide loading indicator
-                    document.getElementById('loading3').style.display = 'none';
-                    
-                } catch (error) {
-                    console.error("Error generating difference visualization:", error);
-                    document.getElementById('loading3').textContent = 
-                        `Error generating difference visualization: ${error.message}`;
-                }
-            }
-            
-            // Helper function to extract vertices from a model
-            function extractVertices(model) {
-                const vertices = [];
-                
-                model.traverse((child) => {
-                    if (child.isMesh && child.geometry) {
-                        const positions = child.geometry.attributes.position;
-                        const itemSize = positions.itemSize;
-                        
-                        for (let i = 0; i < positions.count; i++) {
-                            vertices.push(new THREE.Vector3(
-                                positions.getX(i),
-                                positions.getY(i),
-                                positions.getZ(i)
-                            ));
-                        }
-                    }
-                });
-                
-                return vertices;
-            }
-            
-            // Helper function to apply color mapping based on differences
-            function applyDifferenceColors(model, distances, lowThreshold, mediumThreshold, highThreshold) {
-                let vertexIndex = 0;
-                
-                model.traverse((child) => {
-                    if (child.isMesh && child.geometry) {
-                        // Create a new vertex colors attribute
-                        const colors = [];
-                        const positions = child.geometry.attributes.position;
-                        
-                        for (let i = 0; i < positions.count; i++) {
-                            const distance = distances[vertexIndex++] || 0;
-                            
-                            // Color mapping based on thresholds
-                            let r, g, b;
-                            
-                            if (distance >= highThreshold) {
-                                // Red for significant differences
-                                r = 1.0; g = 0.0; b = 0.0;
-                            } else if (distance >= mediumThreshold) {
-                                // Yellow for medium differences
-                                r = 1.0; g = 1.0; b = 0.0;
-                            } else if (distance >= lowThreshold) {
-                                // Green for small differences
-                                r = 0.0; g = 1.0; b = 0.0;
-                            } else {
-                                // Blue for minimal/no differences
-                                r = 0.0; g = 0.0; b = 1.0;
-                            }
-                            
-                            colors.push(r, g, b);
-                        }
-                        
-                        // Apply the colors to the geometry
-                        const colorAttribute = new THREE.Float32BufferAttribute(colors, 3);
-                        child.geometry.setAttribute('color', colorAttribute);
-                        
-                        // Update the material to use vertex colors
-                        child.material = new THREE.MeshPhongMaterial({
-                            vertexColors: true,
-                            specular: 0x111111,
-                            shininess: 30,
-                            flatShading: true
-                        });
-                    }
-                });
-            }
-            
-            // Handle sync button toggle
-            document.getElementById('syncToggle').addEventListener('click', function() {
-                this.classList.toggle('active');
-                isSyncedView = this.classList.contains('active');
-            });
-            
-            // Handle wireframe toggle
-            document.getElementById('wireframe').addEventListener('click', function() {
-                wireframeEnabled = !wireframeEnabled;
-                
-                if (model1) {
-                    model1.traverse((child) => {
-                        if (child.isMesh) {
-                            child.material.wireframe = wireframeEnabled;
-                        }
+                    document.getElementById('btnBothModels').addEventListener('click', function() {
+                        Plotly.update('plotlyVisualization',
+                            {'visible': response.view_settings.both_meshes_vis},
+                            {'title': 'Damage Analysis - Both Meshes Comparison'});
                     });
-                }
-                
-                if (model2) {
-                    model2.traverse((child) => {
-                        if (child.isMesh) {
-                            child.material.wireframe = wireframeEnabled;
-                        }
+                    
+                    document.getElementById('btnDamageAreas').addEventListener('click', function() {
+                        Plotly.update('plotlyVisualization',
+                            {'visible': response.view_settings.damage_areas_only_vis},
+                            {'title': 'Damage Analysis - Damage Areas Only'});
                     });
-                }
-                
-                // Also update the difference view
-                diffGroup.traverse((child) => {
-                    if (child.isMesh) {
-                        child.material.wireframe = wireframeEnabled;
-                    }
-                });
-            });
-            
-            // Handle rotation toggle
-            document.getElementById('rotate').addEventListener('click', function() {
-                isRotating = !isRotating;
-                this.textContent = isRotating ? 'Pause Rotation' : 'Resume Rotation';
-            });
-            
-            // Handle reset view
-            document.getElementById('resetView').addEventListener('click', function() {
-                // Reset camera positions
-                camera1.position.set(0, 0, camera1.position.z);
-                camera2.position.set(0, 0, camera2.position.z);
-                diffCamera.position.set(0, 0, diffCamera.position.z);
-                
-                // Reset control targets
-                controls1.target.set(0, 0, 0);
-                controls2.target.set(0, 0, 0);
-                diffControls.target.set(0, 0, 0);
-                
-                controls1.update();
-                controls2.update();
-                diffControls.update();
-                
-                // Reset model rotations
-                modelGroup1.rotation.set(0, 0, 0);
-                modelGroup2.rotation.set(0, 0, 0);
-                diffGroup.rotation.set(0, 0, 0);
-            });
-            
-            // Handle axis flips
-            document.getElementById('flipX').addEventListener('click', function() {
-                modelGroup1.rotation.x += Math.PI;
-                modelGroup2.rotation.x += Math.PI;
-                diffGroup.rotation.x += Math.PI;
-            });
-            
-            document.getElementById('flipY').addEventListener('click', function() {
-                modelGroup1.rotation.y += Math.PI;
-                modelGroup2.rotation.y += Math.PI;
-                diffGroup.rotation.y += Math.PI;
-            });
-            
-            document.getElementById('flipZ').addEventListener('click', function() {
-                modelGroup1.rotation.z += Math.PI;
-                modelGroup2.rotation.z += Math.PI;
-                diffGroup.rotation.z += Math.PI;
-            });
-            
-            // Handle downloads
-            document.getElementById('downloadOriginal').addEventListener('click', function() {
-                const downloadLink = document.createElement('a');
-                downloadLink.href = model1URL;
-                downloadLink.download = model1Filename;
-                document.body.appendChild(downloadLink);
-                downloadLink.click();
-                document.body.removeChild(downloadLink);
-            });
-            
-            document.getElementById('downloadDamaged').addEventListener('click', function() {
-                const downloadLink = document.createElement('a');
-                downloadLink.href = model2URL;
-                downloadLink.download = model2Filename;
-                document.body.appendChild(downloadLink);
-                downloadLink.click();
-                document.body.removeChild(downloadLink);
-            });
-            
-            // Handle view mode buttons
-            document.getElementById('sideBySideBtn').addEventListener('click', function() {
-                // Set active button
-                document.querySelectorAll('.view-mode-btn').forEach(btn => btn.classList.remove('active'));
-                this.classList.add('active');
-                
-                // Update views
-                document.getElementById('viewport1').style.display = 'block';
-                document.getElementById('viewport2').style.display = 'block';
-                document.getElementById('differenceView').style.display = 'none';
-                document.getElementById('colorLegend').style.display = 'none';
-                
-                // Reset renderer sizes
-                renderer1.setSize(window.innerWidth / 2, window.innerHeight);
-                renderer2.setSize(window.innerWidth / 2, window.innerHeight);
-                
-                // Update camera aspect ratios
-                camera1.aspect = window.innerWidth / 2 / window.innerHeight;
-                camera2.aspect = window.innerWidth / 2 / window.innerHeight;
-                camera1.updateProjectionMatrix();
-                camera2.updateProjectionMatrix();
-            });
-            
-            document.getElementById('differenceBtn').addEventListener('click', function() {
-                // Set active button
-                document.querySelectorAll('.view-mode-btn').forEach(btn => btn.classList.remove('active'));
-                this.classList.add('active');
-                
-                // Update views
-                document.getElementById('viewport1').style.display = 'none';
-                document.getElementById('viewport2').style.display = 'none';
-                document.getElementById('differenceView').style.display = 'block';
-                document.getElementById('colorLegend').style.display = 'block';
-                
-                // Update renderer and camera for full window
-                diffRenderer.setSize(window.innerWidth, window.innerHeight);
-                diffCamera.aspect = window.innerWidth / window.innerHeight;
-                diffCamera.updateProjectionMatrix();
-            });
-            
-            document.getElementById('overlayBtn').addEventListener('click', function() {
-                // Set active button
-                document.querySelectorAll('.view-mode-btn').forEach(btn => btn.classList.remove('active'));
-                this.classList.add('active');
-                
-                // Update views
-                document.getElementById('viewport1').style.display = 'none';
-                document.getElementById('viewport2').style.display = 'block';
-                document.getElementById('differenceView').style.display = 'none';
-                document.getElementById('colorLegend').style.display = 'none';
-                
-                // Set renderer to full window
-                renderer2.setSize(window.innerWidth, window.innerHeight);
-                camera2.aspect = window.innerWidth / window.innerHeight;
-                camera2.updateProjectionMatrix();
-                
-                // Make both models visible in the same viewport
-                if (model1 && model2) {
-                    // Temporarily move model1 to scene2 for overlay
-                    scene1.remove(modelGroup1);
                     
-                    // Check if model1 is already in scene2
-                    if (!scene2.children.includes(modelGroup1)) {
-                        scene2.add(modelGroup1);
-                    }
-                    
-                    // Set materials for better visibility
-                    model1.traverse(child => {
-                        if (child.isMesh) {
-                            child.material = new THREE.MeshPhongMaterial({
-                                color: 0x4299e1,
-                                opacity: 0.5,
-                                transparent: true,
-                                depthWrite: false
-                            });
-                        }
+                    document.getElementById('btnOriginalWithDamage').addEventListener('click', function() {
+                        Plotly.update('plotlyVisualization',
+                            {'visible': response.view_settings.original_and_damage_vis},
+                            {'title': 'Damage Analysis - Original Mesh with Damage Areas'});
                     });
-                }
-            });
-            
-            // Revert to normal side-by-side mode when going back
-            document.getElementById('sideBySideBtn').addEventListener('click', function() {
-                if (model1) {
-                    // Move model1 back to its original scene
-                    scene2.remove(modelGroup1);
                     
-                    if (!scene1.children.includes(modelGroup1)) {
-                        scene1.add(modelGroup1);
-                    }
-                    
-                    // Reset material
-                    model1.traverse(child => {
-                        if (child.isMesh) {
-                            child.material = new THREE.MeshPhongMaterial({
-                                color: 0x4299e1,
-                                specular: 0x111111,
-                                shininess: 30,
-                                flatShading: true,
-                                wireframe: wireframeEnabled
-                            });
-                        }
+                    document.getElementById('btnDamagedWithDamage').addEventListener('click', function() {
+                        Plotly.update('plotlyVisualization',
+                            {'visible': response.view_settings.damaged_and_damage_vis},
+                            {'title': 'Damage Analysis - Damaged Mesh with Damage Areas'});
                     });
+                },
+                error: function(error) {
+                    document.getElementById('plotlyVisualization').innerHTML = `
+                        <div style="color: red; padding: 30px;">
+                            <h3>Error Loading Visualization</h3>
+                            <p>${error.responseText || 'Failed to analyze model damage. Please try again later.'}</p>
+                        </div>
+                    `;
+                    document.getElementById('damageSummary').innerHTML = '<p>Error loading damage summary data.</p>';
+                    document.getElementById('damageDetails').innerHTML = '<p>Error loading damage details.</p>';
                 }
             });
-            
-            // Handle window resize
-            window.addEventListener('resize', function() {
-                // Get the active view mode
-                const differenceMode = document.getElementById('differenceBtn').classList.contains('active');
-                const overlayMode = document.getElementById('overlayBtn').classList.contains('active');
-                
-                if (differenceMode) {
-                    // Difference view mode
-                    diffRenderer.setSize(window.innerWidth, window.innerHeight);
-                    diffCamera.aspect = window.innerWidth / window.innerHeight;
-                    diffCamera.updateProjectionMatrix();
-                } else if (overlayMode) {
-                    // Overlay view mode
-                    renderer2.setSize(window.innerWidth, window.innerHeight);
-                    camera2.aspect = window.innerWidth / window.innerHeight;
-                    camera2.updateProjectionMatrix();
-                } else {
-                    // Side by side mode
-                    renderer1.setSize(window.innerWidth / 2, window.innerHeight);
-                    renderer2.setSize(window.innerWidth / 2, window.innerHeight);
-                    
-                    camera1.aspect = window.innerWidth / 2 / window.innerHeight;
-                    camera2.aspect = window.innerWidth / 2 / window.innerHeight;
-                    
-                    camera1.updateProjectionMatrix();
-                    camera2.updateProjectionMatrix();
-                }
-            });
-            
-            // Animation loop
-            function animate() {
-                requestAnimationFrame(animate);
-                
-                if (isRotating) {
-                    // Rotate all model groups
-                    modelGroup1.rotation.y += 0.005;
-                    modelGroup2.rotation.y += 0.005;
-                    diffGroup.rotation.y += 0.005;
-                }
-                
-                // Update controls
-                controls1.update();
-                controls2.update();
-                diffControls.update();
-                
-                // Sync cameras if enabled
-                if (isSyncedView) {
-                    // Sync which camera controls are currently active
-                    const activeElement = document.activeElement;
-                    let activeControls = null;
-                    
-                    if (renderer1.domElement.contains(activeElement)) {
-                        activeControls = controls1;
-                    } else if (renderer2.domElement.contains(activeElement)) {
-                        activeControls = controls2;
-                    } else if (diffRenderer.domElement.contains(activeElement)) {
-                        activeControls = diffControls;
-                    }
-                    
-                    if (activeControls) {
-                        // Sync camera positions and targets across all views
-                        if (activeControls === controls1) {
-                            camera2.position.copy(camera1.position);
-                            controls2.target.copy(controls1.target);
-                            
-                            diffCamera.position.copy(camera1.position);
-                            diffControls.target.copy(controls1.target);
-                        } else if (activeControls === controls2) {
-                            camera1.position.copy(camera2.position);
-                            controls1.target.copy(controls2.target);
-                            
-                            diffCamera.position.copy(camera2.position);
-                            diffControls.target.copy(controls2.target);
-                        } else if (activeControls === diffControls) {
-                            camera1.position.copy(diffCamera.position);
-                            controls1.target.copy(diffControls.target);
-                            
-                            camera2.position.copy(diffCamera.position);
-                            controls2.target.copy(diffControls.target);
-                        }
-                    }
-                }
-                
-                // Render all scenes
-                renderer1.render(scene1, camera1);
-                renderer2.render(scene2, camera2);
-                diffRenderer.render(diffScene, diffCamera);
-            }
-            
-            // Start animation
-            animate();
         </script>
     </body>
     </html>
-    ''', model1=model1_info, model2=model2_info)
+    ''', original_name=original_name, damaged_name=damaged_name, 
+        original_path=original_path, damaged_path=damaged_path)
+
+@app.route('/api/analyze_model_damage', methods=['POST'])
+def api_analyze_model_damage():
+    """API endpoint to analyze damage between two 3D models and return visualization data"""
+    try:
+        # Get paths from request
+        data = request.get_json()
+        if not data or 'original_path' not in data or 'damaged_path' not in data:
+            return jsonify({'error': 'Missing required parameters'}), 400
+            
+        original_path = data['original_path']
+        damaged_path = data['damaged_path']
+        
+        # Load meshes
+        mesh_original, mesh_damaged = load_meshes(original_path, damaged_path)
+        if mesh_original is None or mesh_damaged is None:
+            return jsonify({'error': 'Failed to load mesh data'}), 500
+            
+        # Analyze damage
+        distances, damage_clusters = analyze_damage(mesh_original, mesh_damaged)
+        if distances is None:
+            return jsonify({'error': 'Failed to analyze mesh differences'}), 500
+            
+        # Create improved visualization
+        fig = create_improved_visualization(mesh_original, mesh_damaged, distances, damage_clusters)
+        
+        # Get plotly JSON data
+        plot_data = fig.to_dict()['data']
+        plot_layout = fig.to_dict()['layout']
+        
+        # Count how many traces we have (needed for visibility settings)
+        total_traces = len(plot_data)
+        mesh_original_idx = 0
+        mesh_damaged_idx = 1
+        damage_mesh_indices = list(range(2, total_traces))
+        damage_label_indices = []
+        damage_submesh_indices = []
+
+        # Separate damage labels from damage meshes
+        for i in damage_mesh_indices:
+            if 'mode' in plot_data[i] and plot_data[i]['mode'] == 'markers+text':
+                damage_label_indices.append(i)
+            else:
+                damage_submesh_indices.append(i)
+
+        # Create visibility settings for each view
+        damaged_only_vis = [False, True] + [True if i in damage_label_indices else False for i in range(2, total_traces)]
+        original_only_vis = [True, False] + [True if i in damage_label_indices else False for i in range(2, total_traces)]
+        both_meshes_vis = [True, True] + [True if i in damage_label_indices else False for i in range(2, total_traces)]
+        damage_areas_only_vis = [False, False] + [True for i in range(2, total_traces)]
+        original_and_damage_vis = [True, False] + [True for i in range(2, total_traces)]
+        damaged_and_damage_vis = [False, True] + [True for i in range(2, total_traces)]
+        
+        # Prepare response data
+        response_data = {
+            'plot_data': plot_data,
+            'plot_layout': plot_layout,
+            'total_vertices': len(mesh_damaged.vertices),
+            'view_settings': {
+                'damaged_only_vis': damaged_only_vis,
+                'original_only_vis': original_only_vis,
+                'both_meshes_vis': both_meshes_vis,
+                'damage_areas_only_vis': damage_areas_only_vis,
+                'original_and_damage_vis': original_and_damage_vis,
+                'damaged_and_damage_vis': damaged_and_damage_vis
+            }
+        }
+        
+        # Add damage clusters if available
+        if damage_clusters:
+            # Convert damage clusters to JSON-serializable format
+            serializable_clusters = []
+            for cluster in damage_clusters:
+                serializable_cluster = {
+                    'id': cluster['id'],
+                    'center': cluster['center'].tolist() if isinstance(cluster['center'], np.ndarray) else cluster['center'],
+                    'size': cluster['size'],
+                    'max_damage': float(cluster['max_damage']),
+                    'avg_damage': float(cluster['avg_damage']),
+                    'total_damage': float(cluster['total_damage']),
+                    'volume': float(cluster['volume']),
+                    'surface_area': float(cluster['surface_area']),
+                    'severity': cluster['severity'],
+                    'label': cluster['label']
+                }
+                serializable_clusters.append(serializable_cluster)
+            
+            response_data['damage_clusters'] = serializable_clusters
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        app.logger.error(f"Error analyzing model damage: {str(e)}")
+        return jsonify({'error': f'Error analyzing model damage: {str(e)}'}), 500
 
 # Also add this new route to get all models for comparison selection
 @app.route('/select_models_to_compare')
 def select_models_to_compare():
-    """Show a page to select two models for comparison"""
-    # Get all models from the collection
+    """Show a page to select two specific models for comparison"""
+    # Get all models from the collection but we'll only show the Porsche models
     all_models = list(models_collection.find({}, {
         "filename": 1, 
         "_id": 0, 
         "created_at": 1
     }))
     
-    # Convert any datetime objects to ISO format strings for consistent handling
-    for model in all_models:
-        if "created_at" in model:
-            if isinstance(model["created_at"], datetime.datetime):
-                # Convert datetime to string for consistent comparison
-                model["created_at"] = model["created_at"].isoformat()
-            elif not isinstance(model["created_at"], str):
-                # If it's neither datetime nor string, set default value
-                model["created_at"] = "1970-01-01T00:00:00"
+    # Only allow porsche_original.obj and porsche_damaged.obj
+    porsche_models = [model.get("filename") for model in all_models 
+                     if model.get("filename") in ["porsche_original.obj", "porsche_damaged.obj"]]
     
-    # Sort models by creation date (newest first)
-    # Use a sorting function that handles string ISO dates correctly
-    def sort_key(x):
-        created_at = x.get("created_at", "1970-01-01T00:00:00")
-        if not created_at:
-            return "1970-01-01T00:00:00"
-        return created_at
-    
-    all_models = sorted(all_models, key=sort_key, reverse=True)
-    
-    # Extract just the filenames for the template
-    model_filenames = [model.get("filename") for model in all_models if model.get("filename")]
+    # If both models aren't found, provide a message
+    if len(porsche_models) < 2:
+        missing_models = []
+        if "porsche_original.obj" not in porsche_models:
+            missing_models.append("porsche_original.obj")
+        if "porsche_damaged.obj" not in porsche_models:
+            missing_models.append("porsche_damaged.obj")
+        error_message = f"Missing required models: {', '.join(missing_models)}"
+        return render_template_string(f'''
+        <!doctype html>
+        <html>
+        <head>
+            <title>Model Comparison Error</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }}
+                .container {{ max-width: 800px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }}
+                h1 {{ color: #e53e3e; }}
+                p {{ color: #4a5568; margin-bottom: 25px; }}
+                .back-link {{ display: inline-block; margin-top: 20px; color: #4299e1; text-decoration: none; }}
+                .back-link:hover {{ text-decoration: underline; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Models Not Found</h1>
+                <p>{error_message}</p>
+                <p>Please upload the required models to continue.</p>
+                <a href="/models" class="back-link">Back to Models</a>
+            </div>
+        </body>
+        </html>
+        ''')
     
     return render_template_string('''
     <!doctype html>
     <html>
     <head>
-        <title>Compare 3D Models</title>
+        <title>Compare Porsche Models</title>
         <style>
             body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
             .container { max-width: 800px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
             h1 { color: #2d3748; }
             p { color: #4a5568; margin-bottom: 25px; }
-            select { 
-                padding: 12px; 
-                font-size: 16px; 
-                border-radius: 8px; 
-                border: 1px solid #e2e8f0; 
-                width: 100%; 
-                margin-bottom: 20px;
-                cursor: pointer;
+            .model-card {
+                padding: 15px;
+                margin: 15px 0;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                text-align: left;
+                background: #f8fafc;
+            }
+            .model-card.selected {
+                border-color: #4299e1;
+                background: #ebf8ff;
+            }
+            .model-title {
+                font-weight: bold;
+                font-size: 18px;
+                margin-bottom: 5px;
+            }
+            .model-description {
+                font-size: 14px;
+                color: #718096;
+                margin-bottom: 10px;
             }
             button { 
                 padding: 12px 20px; 
@@ -3059,6 +2611,7 @@ def select_models_to_compare():
                 font-weight: 600; 
                 transition: all 0.3s ease;
                 width: 100%;
+                margin-top: 20px;
             }
             button:hover { background: #3182ce; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
             .back-link {
@@ -3070,101 +2623,68 @@ def select_models_to_compare():
             .back-link:hover {
                 text-decoration: underline;
             }
-            .model-selectors {
-                display: flex;
-                gap: 20px;
-            }
-            .model-selector {
-                flex: 1;
-                text-align: left;
-            }
-            .model-selector h3 {
-                margin-top: 0;
-            }
-            .warning {
-                color: #e53e3e;
-                background-color: #fed7d7;
-                padding: 10px;
-                border-radius: 5px;
-                margin-top: 20px;
-                text-align: left;
-                display: none;
-            }
-            .info-text {
-                font-size: 14px;
-                color: #718096;
-                margin-top: 5px;
-                text-align: left;
+            input[type="radio"] {
+                margin-right: 10px;
             }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>Compare 3D Models</h1>
-            <p>Select two models to compare side-by-side with difference visualization.</p>
+            <h1>Compare Porsche Models</h1>
+            <p>The system will automatically compare the original and damaged Porsche models using advanced visualization.</p>
             
-            <div class="model-selectors">
-                <div class="model-selector">
-                    <h3>Original Model</h3>
-                    <select id="model1">
-                        <option value="">Select a model...</option>
-                        {% for filename in model_filenames %}
-                            <option value="{{ filename }}">{{ filename }}</option>
-                        {% endfor %}
-                    </select>
-                    <div class="info-text">This will be displayed as the "original" or reference model</div>
+            <form id="compareForm" action="/compare_porsche_models" method="GET">
+                <div class="model-card">
+                    <input type="radio" id="original" name="reference_model" value="porsche_original.obj" checked>
+                    <label for="original">
+                        <div class="model-title">Porsche Original</div>
+                        <div class="model-description">Reference model in pristine condition</div>
+                    </label>
                 </div>
                 
-                <div class="model-selector">
-                    <h3>Damaged Model</h3>
-                    <select id="model2">
-                        <option value="">Select a model...</option>
-                        {% for filename in model_filenames %}
-                            <option value="{{ filename }}">{{ filename }}</option>
-                        {% endfor %}
-                    </select>
-                    <div class="info-text">This will be compared against the original model</div>
+                <div class="model-card">
+                    <input type="radio" id="damaged" name="reference_model" value="porsche_damaged.obj">
+                    <label for="damaged">
+                        <div class="model-title">Porsche Damaged</div>
+                        <div class="model-description">Model with damage to compare against the original</div>
+                    </label>
                 </div>
-            </div>
-            
-            <div id="warningMessage" class="warning">
-                Please select different models for comparison.
-            </div>
-            
-            <button onclick="compareModels()">Compare Models</button>
+                
+                <p>Choose which model should be the reference (the other will be treated as the comparison model)</p>
+                
+                <button type="submit">Compare Models with Plotly Visualization</button>
+            </form>
             
             <a href="/models" class="back-link">Back to Models</a>
         </div>
         
         <script>
-            function compareModels() {
-                const model1 = document.getElementById('model1').value;
-                const model2 = document.getElementById('model2').value;
-                const warningElement = document.getElementById('warningMessage');
+            // Add visual selection effect
+            document.querySelectorAll('input[type="radio"]').forEach(radio => {
+                radio.addEventListener('change', function() {
+                    document.querySelectorAll('.model-card').forEach(card => {
+                        card.classList.remove('selected');
+                    });
+                    this.closest('.model-card').classList.add('selected');
+                });
+            });
+            
+            // Set initial selected state
+            document.getElementById('original').closest('.model-card').classList.add('selected');
+            
+            // Handle form submission
+            document.getElementById('compareForm').addEventListener('submit', function(e) {
+                e.preventDefault();
                 
-                // Hide any previous warning
-                warningElement.style.display = 'none';
+                const referenceModel = document.querySelector('input[name="reference_model"]:checked').value;
+                const comparisonModel = referenceModel === 'porsche_original.obj' ? 'porsche_damaged.obj' : 'porsche_original.obj';
                 
-                // Validate selections
-                if (!model1 || !model2) {
-                    warningElement.textContent = 'Please select both models for comparison.';
-                    warningElement.style.display = 'block';
-                    return;
-                }
-                
-                if (model1 === model2) {
-                    warningElement.textContent = 'Please select different models for comparison.';
-                    warningElement.style.display = 'block';
-                    return;
-                }
-                
-                // Redirect to comparison page
-                window.location.href = `/compare_models/${model1}/${model2}`;
-            }
+                window.location.href = `/compare_models/${referenceModel}/${comparisonModel}`;
+            });
         </script>
     </body>
     </html>
-    ''', model_filenames=model_filenames)
+    ''')
 
 def process_point_cloud_to_mesh(point_cloud_path, output_path, method="poisson", depth=8, sample_ratio=1.0):
     """
