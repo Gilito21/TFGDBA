@@ -187,7 +187,7 @@ def upload_form():
             <!-- Model Analysis Section -->
             <div style="padding: 30px; background-color: #f8fafc; border-radius: 10px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); margin-bottom: 30px;">
                 <h2 style="color: #2d3748; margin-bottom: 15px;">Analyze 3D Model Differences</h2>
-                <p style="color: #4a5568; margin-bottom: 25px; font-size: 1.1em;">Compare Porsche model files to detect and visualize damage using advanced 3D analysis.</p>
+                <p style="color: #4a5568; margin-bottom: 25px; font-size: 1.1em;">Compare previously created model files to detect and visualize damage using advanced 3D analysis.</p>
                 
                 <div style="display: flex; justify-content: space-between; margin: 30px 0; flex-wrap: wrap; gap: 20px;">
                     <div style="flex: 1; min-width: 200px; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); text-align: center; transition: transform 0.3s ease, box-shadow 0.3s ease;">
@@ -207,7 +207,7 @@ def upload_form():
                     </div>
                 </div>
                 
-                <a href="/select_models_to_compare" style="display: inline-block; background-color: #4299e1; color: white; padding: 12px 24px; border-radius: 8px; font-weight: bold; text-decoration: none; margin-top: 20px; transition: all 0.3s ease; border: none; cursor: pointer; font-size: 1.1em; text-align: center;">Compare Porsche Models</a>
+                <a href="/select_models_to_compare" style="display: inline-block; background-color: #4299e1; color: white; padding: 12px 24px; border-radius: 8px; font-weight: bold; text-decoration: none; margin-top: 20px; transition: all 0.3s ease; border: none; cursor: pointer; font-size: 1.1em; text-align: center;">Compare 3D Models</a>
             </div>
         </div>
     </body>
@@ -2594,7 +2594,7 @@ def select_models_to_compare():
     <!doctype html>
     <html>
     <head>
-        <title>Compare Porsche Models</title>
+        <title>Compare 3D Models</title>
         <style>
             body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
             .container { max-width: 800px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
@@ -2652,7 +2652,7 @@ def select_models_to_compare():
     </head>
     <body>
         <div class="container">
-            <h1>Compare Porsche Models</h1>
+            <h1>Compare 3D Models</h1>
             <p>The system will automatically compare the original and damaged Porsche models using advanced visualization.</p>
             
             <form id="compareForm" action="/compare_porsche_models" method="GET">
