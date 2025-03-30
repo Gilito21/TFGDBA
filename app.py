@@ -2871,9 +2871,9 @@ def api_analyze_model_damage():
                     if isinstance(value, np.ndarray):
                         trace_dict[key] = value.tolist()
                     # Convert numpy scalars to Python scalars
-                    elif isinstance(value, (np.int_, np.int32, np.int64)):
+                    elif isinstance(value, (np.int32, np.int64)):
                         trace_dict[key] = int(value)
-                    elif isinstance(value, (np.float_, np.float32, np.float64)):
+                    elif isinstance(value, (np.float32, np.float64)):
                         trace_dict[key] = float(value)
                     # Handle nested dictionaries
                     elif isinstance(value, dict):
