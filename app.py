@@ -2686,9 +2686,6 @@ def compare_models(model1, model2):
 # Make sure to add this import at the top of your file
 import traceback
 
-# Modify this in your API endpoint to make sure the visibility settings and data are correct
-# This runs before sending the JSON data to the frontend
-
 @app.route('/api/analyze_model_damage', methods=['POST'])
 def api_analyze_model_damage():
     """API endpoint to analyze damage between two 3D models"""
@@ -2751,32 +2748,39 @@ def api_analyze_model_damage():
             
         # Create visualization with BOTH MESHES VISIBLE initially
         try:
+            # IMPORTANT: Convert NumPy arrays to lists for JSON serialization
+            vertices_original = mesh_original.vertices.tolist()
+            faces_original = mesh_original.faces.tolist()
+            vertices_damaged = mesh_damaged.vertices.tolist()
+            faces_damaged = mesh_damaged.faces.tolist()
+            distances_list = distances.tolist() if isinstance(distances, np.ndarray) else distances
+            
             # Create figure with a larger size
             fig = go.Figure()
 
             # Add the original mesh (VISIBLE by default)
             fig.add_trace(go.Mesh3d(
-                x=mesh_original.vertices[:, 0],
-                y=mesh_original.vertices[:, 1],
-                z=mesh_original.vertices[:, 2],
-                i=mesh_original.faces[:, 0],
-                j=mesh_original.faces[:, 1],
-                k=mesh_original.faces[:, 2],
+                x=vertices_original[:, 0],
+                y=vertices_original[:, 1],
+                z=vertices_original[:, 2],
+                i=faces_original[:, 0],
+                j=faces_original[:, 1],
+                k=faces_original[:, 2],
                 color='blue',
                 opacity=0.5,
                 name='Original Mesh',
-                visible=True  # CHANGED FROM FALSE TO TRUE
+                visible=True
             ))
 
             # Add the damaged mesh with color based on damage intensity
             fig.add_trace(go.Mesh3d(
-                x=mesh_damaged.vertices[:, 0],
-                y=mesh_damaged.vertices[:, 1],
-                z=mesh_damaged.vertices[:, 2],
-                i=mesh_damaged.faces[:, 0],
-                j=mesh_damaged.faces[:, 1],
-                k=mesh_damaged.faces[:, 2],
-                intensity=distances,
+                x=vertices_damaged[:, 0],
+                y=vertices_damaged[:, 1],
+                z=vertices_damaged[:, 2],
+                i=faces_damaged[:, 0],
+                j=faces_damaged[:, 1],
+                k=faces_damaged[:, 2],
+                intensity=distances_list,
                 colorscale='Viridis',
                 opacity=0.8,
                 name='Damaged Mesh',
@@ -2796,17 +2800,19 @@ def api_analyze_model_damage():
             # Add damage meshes as separate traces
             if damage_clusters:
                 for damage in damage_clusters:
-                    # Only add the marker points, skip the submeshes which might be causing issues
+                    # Convert any NumPy arrays in the damage cluster to lists
+                    center = damage['center'].tolist() if isinstance(damage['center'], np.ndarray) else damage['center']
+                    
                     # Add text label at damage center
                     fig.add_trace(go.Scatter3d(
-                        x=[damage['center'][0]],
-                        y=[damage['center'][1]],
-                        z=[damage['center'][2]],
+                        x=[center[0]],
+                        y=[center[1]],
+                        z=[center[2]],
                         mode='markers+text',
                         marker=dict(size=10, color='red' if damage['severity'] == 'Severe' else 
                                    ('orange' if damage['severity'] == 'Moderate' else 'yellow'), 
                                    symbol='circle'),
-                        text=[f"Area {damage['id']}"],  # Shorter text for less clutter
+                        text=[f"Area {damage['id']}"],
                         textposition="top center",
                         name=damage['label'],
                         showlegend=True,
@@ -2818,7 +2824,7 @@ def api_analyze_model_damage():
                                 f"Affected points: {damage['size']}<br>" +
                                 f"Approx. volume: {damage['volume']:.4f}<br>" +
                                 f"Approx. surface area: {damage['surface_area']:.4f}"],
-                        visible=True  # Labels are always visible
+                        visible=True
                     ))
 
             # Count how many traces we have
@@ -2850,23 +2856,49 @@ def api_analyze_model_damage():
                 width=1000
             )
             
-            # Generate plot data for frontend
-            plot_data = fig.data
-            plot_layout = fig.layout
-            
         except Exception as e:
             print(f"Error creating visualization: {str(e)}")
+            import traceback
+            traceback_str = traceback.format_exc()
+            print(f"Traceback: {traceback_str}")
             return jsonify({'error': f'Error creating visualization: {str(e)}'}), 500
         
         # Create visibility settings for the button actions
         damaged_only_vis = [False, True] + [True for i in range(2, total_traces)]
         original_only_vis = [True, False] + [True for i in range(2, total_traces)]
-        both_meshes_vis = [True, True] + [True for i in range(2, total_traces)]  # Match initial setting
+        both_meshes_vis = [True, True] + [True for i in range(2, total_traces)]
+        
+        # IMPORTANT: Manually serialize the Plotly data to avoid NumPy array issues
+        # This is a custom JSON serializer function
+        def serialize_plotly_obj(obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, list):
+                return [serialize_plotly_obj(item) for item in obj]
+            elif isinstance(obj, dict):
+                return {key: serialize_plotly_obj(value) for key, value in obj.items()}
+            else:
+                return obj
+        
+        # Serialize the plot data manually
+        serialized_data = []
+        for trace in fig.data:
+            # Convert the trace to a dict and then serialize it
+            trace_dict = trace.to_plotly_json()
+            serialized_trace = serialize_plotly_obj(trace_dict)
+            serialized_data.append(serialized_trace)
+        
+        # Serialize the layout
+        serialized_layout = serialize_plotly_obj(fig.layout.to_plotly_json())
         
         # Prepare response data
         response_data = {
-            'plot_data': [trace.to_plotly_json() for trace in plot_data],  # Convert to JSON format
-            'plot_layout': plot_layout.to_plotly_json(),                   # Convert to JSON format
+            'plot_data': serialized_data,
+            'plot_layout': serialized_layout,
             'total_vertices': len(mesh_damaged.vertices),
             'view_settings': {
                 'damaged_only_vis': damaged_only_vis,
@@ -2885,7 +2917,7 @@ def api_analyze_model_damage():
                 serializable_cluster = {
                     'id': cluster['id'],
                     'center': cluster['center'].tolist() if isinstance(cluster['center'], np.ndarray) else cluster['center'],
-                    'size': cluster['size'],
+                    'size': int(cluster['size']),
                     'max_damage': float(cluster['max_damage']),
                     'avg_damage': float(cluster['avg_damage']),
                     'total_damage': float(cluster['total_damage']),
@@ -2897,6 +2929,25 @@ def api_analyze_model_damage():
                 serializable_clusters.append(serializable_cluster)
             
             response_data['damage_clusters'] = serializable_clusters
+        
+        # TEST: Try to serialize the response as JSON to catch any serialization issues
+        try:
+            import json
+            json.dumps(response_data)
+            print("JSON serialization test passed")
+        except TypeError as e:
+            print(f"WARNING: JSON serialization test failed: {str(e)}")
+            # Try to identify the problematic field
+            for key, value in response_data.items():
+                try:
+                    json.dumps(value)
+                except TypeError:
+                    print(f"Problematic field: {key}")
+                    
+            # Fall back to a simpler response
+            return jsonify({
+                'error': 'Could not serialize the visualization data. Please check the server logs.'
+            }), 500
         
         return jsonify(response_data)
         
