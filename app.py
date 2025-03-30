@@ -2457,10 +2457,64 @@ def api_analyze_model_damage():
         if not data or 'original_path' not in data or 'damaged_path' not in data:
             return jsonify({'error': 'Missing required parameters'}), 400
             
+        # Get the base directory for model files
+        # This should be the absolute path to where your model files are stored
+        base_dir = os.path.join(os.getcwd(), 'static')  # Adjust this to your actual storage location
+        
+        # Get the relative paths from the request
         original_path = data['original_path']
         damaged_path = data['damaged_path']
         
+        # Print the paths for debugging
+        print(f"Original path from DB: {original_path}")
+        print(f"Damaged path from DB: {damaged_path}")
+        
+        # Try to find the files - first check if the paths are already absolute
+        if not os.path.exists(original_path):
+            # Try different combinations to find the file
+            possible_paths = [
+                original_path,
+                os.path.join(base_dir, original_path),
+                os.path.join(base_dir, os.path.basename(original_path)),
+                os.path.join(base_dir, 'models', os.path.basename(original_path))
+            ]
+            
+            # Try each path
+            found = False
+            for path in possible_paths:
+                print(f"Trying path: {path}")
+                if os.path.exists(path):
+                    original_path = path
+                    found = True
+                    print(f"Found original file at: {path}")
+                    break
+                    
+            if not found:
+                return jsonify({'error': f'Could not find original model file. Tried: {possible_paths}'}), 404
+        
+        # Same for damaged path
+        if not os.path.exists(damaged_path):
+            possible_paths = [
+                damaged_path,
+                os.path.join(base_dir, damaged_path),
+                os.path.join(base_dir, os.path.basename(damaged_path)),
+                os.path.join(base_dir, 'models', os.path.basename(damaged_path))
+            ]
+            
+            found = False
+            for path in possible_paths:
+                print(f"Trying path: {path}")
+                if os.path.exists(path):
+                    damaged_path = path
+                    found = True
+                    print(f"Found damaged file at: {path}")
+                    break
+                    
+            if not found:
+                return jsonify({'error': f'Could not find damaged model file. Tried: {possible_paths}'}), 404
+        
         # Load meshes
+        print(f"Loading meshes from: {original_path} and {damaged_path}")
         mesh_original, mesh_damaged = load_meshes(original_path, damaged_path)
         if mesh_original is None or mesh_damaged is None:
             return jsonify({'error': 'Failed to load mesh data'}), 500
