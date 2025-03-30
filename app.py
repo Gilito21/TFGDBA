@@ -2686,64 +2686,62 @@ def compare_models(model1, model2):
 # Make sure to add this import at the top of your file
 import traceback
 
+# Modify this in your API endpoint to make sure the visibility settings and data are correct
+# This runs before sending the JSON data to the frontend
+
 @app.route('/api/analyze_model_damage', methods=['POST'])
 def api_analyze_model_damage():
-    """API endpoint to analyze damage between two 3D models with improved file handling"""
+    """API endpoint to analyze damage between two 3D models"""
     try:
         # Get paths from request
         data = request.get_json()
-        if not data:
-            return jsonify({'error': 'Missing request data'}), 400
+        if not data or 'original_path' not in data or 'damaged_path' not in data:
+            return jsonify({'error': 'Missing required parameters'}), 400
             
-        print(f"Received request data: {data}")
+        original_path = data['original_path']
+        damaged_path = data['damaged_path']
         
-        # Look for the models in a more comprehensive way
-        model_paths = {}
+        # Add detailed debugging
+        print(f"\n==== MODEL LOADING DEBUG ====")
+        print(f"Original path: {original_path}")
+        print(f"Damaged path: {damaged_path}")
+        print(f"Files exist? Original: {os.path.exists(original_path)}, Damaged: {os.path.exists(damaged_path)}")
+        if os.path.exists(original_path):
+            print(f"Original file size: {os.path.getsize(original_path) / 1024:.2f} KB")
+        if os.path.exists(damaged_path):
+            print(f"Damaged file size: {os.path.getsize(damaged_path) / 1024:.2f} KB")
         
-        # Handle direct file paths from the request
-        original_path = data.get('original_path', '')
-        damaged_path = data.get('damaged_path', '')
-        
-        # Print the paths for debugging
-        print(f"Requested original path: {original_path}")
-        print(f"Requested damaged path: {damaged_path}")
-        
-        # Verify that the files exist
-        if not os.path.exists(original_path):
-            return jsonify({'error': f'Original model file not found at path: {original_path}'}), 404
-            
-        if not os.path.exists(damaged_path):
-            return jsonify({'error': f'Damaged model file not found at path: {damaged_path}'}), 404
-        
-        print(f"Found original model at: {original_path}")
-        print(f"Found damaged model at: {damaged_path}")
-        
-        # Load meshes
+        # Load meshes with additional debug info
         try:
-            print(f"Loading meshes from: {original_path} and {damaged_path}")
-            mesh_original, mesh_damaged = load_meshes(original_path, damaged_path)
+            print(f"Attempting to load meshes...")
+            mesh_original = trimesh.load(original_path)
+            mesh_damaged = trimesh.load(damaged_path)
             
-            if mesh_original is None:
-                return jsonify({'error': f'Failed to load original mesh from {original_path}'}), 500
+            print(f"Original mesh type: {type(mesh_original)}")
+            print(f"Damaged mesh type: {type(mesh_damaged)}")
+            
+            # Handle scene objects
+            if isinstance(mesh_original, trimesh.Scene):
+                print("Original mesh is a scene, concatenating geometry...")
+                mesh_original = trimesh.util.concatenate([g for g in mesh_original.geometry.values()])
+            if isinstance(mesh_damaged, trimesh.Scene):
+                print("Damaged mesh is a scene, concatenating geometry...")
+                mesh_damaged = trimesh.util.concatenate([g for g in mesh_damaged.geometry.values()])
                 
-            if mesh_damaged is None:
-                return jsonify({'error': f'Failed to load damaged mesh from {damaged_path}'}), 500
-                
-            print(f"Successfully loaded meshes:")
-            print(f"Original mesh: {len(mesh_original.vertices)} vertices, {len(mesh_original.faces)} faces")
-            print(f"Damaged mesh: {len(mesh_damaged.vertices)} vertices, {len(mesh_damaged.faces)} faces")
+            print(f"Original mesh after processing: {len(mesh_original.vertices)} vertices, {len(mesh_original.faces)} faces")
+            print(f"Damaged mesh after processing: {len(mesh_damaged.vertices)} vertices, {len(mesh_damaged.faces)} faces")
             
         except Exception as e:
-            print(f"Error loading meshes: {str(e)}")
-            return jsonify({'error': f'Error loading meshes: {str(e)}'}), 500
+            print(f"Error during mesh loading: {str(e)}")
+            return jsonify({'error': f'Error loading mesh data: {str(e)}'}), 500
             
         # Analyze damage
         try:
-            print("Analyzing damage between meshes...")
+            print("Analyzing damage...")
             distances, damage_clusters = analyze_damage(mesh_original, mesh_damaged)
-            
             if distances is None:
-                return jsonify({'error': 'Failed to analyze mesh differences - incompatible meshes'}), 500
+                print("Could not analyze damage - distances is None")
+                return jsonify({'error': 'Failed to analyze mesh differences'}), 500
                 
             print(f"Analysis complete. Found {len(damage_clusters) if damage_clusters else 0} damage clusters.")
             
@@ -2751,57 +2749,133 @@ def api_analyze_model_damage():
             print(f"Error analyzing damage: {str(e)}")
             return jsonify({'error': f'Error analyzing damage: {str(e)}'}), 500
             
-        # Create improved visualization
+        # Create visualization with BOTH MESHES VISIBLE initially
         try:
-            print("Creating visualization...")
-            fig = create_improved_visualization(mesh_original, mesh_damaged, distances, damage_clusters)
-            print("Visualization created successfully.")
+            # Create figure with a larger size
+            fig = go.Figure()
+
+            # Add the original mesh (VISIBLE by default)
+            fig.add_trace(go.Mesh3d(
+                x=mesh_original.vertices[:, 0],
+                y=mesh_original.vertices[:, 1],
+                z=mesh_original.vertices[:, 2],
+                i=mesh_original.faces[:, 0],
+                j=mesh_original.faces[:, 1],
+                k=mesh_original.faces[:, 2],
+                color='blue',
+                opacity=0.5,
+                name='Original Mesh',
+                visible=True  # CHANGED FROM FALSE TO TRUE
+            ))
+
+            # Add the damaged mesh with color based on damage intensity
+            fig.add_trace(go.Mesh3d(
+                x=mesh_damaged.vertices[:, 0],
+                y=mesh_damaged.vertices[:, 1],
+                z=mesh_damaged.vertices[:, 2],
+                i=mesh_damaged.faces[:, 0],
+                j=mesh_damaged.faces[:, 1],
+                k=mesh_damaged.faces[:, 2],
+                intensity=distances,
+                colorscale='Viridis',
+                opacity=0.8,
+                name='Damaged Mesh',
+                showscale=True,
+                colorbar=dict(
+                    title=dict(
+                        text='Deformation',
+                        side='right'
+                    ),
+                    thickness=20,
+                    len=0.6,
+                    y=0.5
+                ),
+                visible=True
+            ))
+
+            # Add damage meshes as separate traces
+            if damage_clusters:
+                for damage in damage_clusters:
+                    # Only add the marker points, skip the submeshes which might be causing issues
+                    # Add text label at damage center
+                    fig.add_trace(go.Scatter3d(
+                        x=[damage['center'][0]],
+                        y=[damage['center'][1]],
+                        z=[damage['center'][2]],
+                        mode='markers+text',
+                        marker=dict(size=10, color='red' if damage['severity'] == 'Severe' else 
+                                   ('orange' if damage['severity'] == 'Moderate' else 'yellow'), 
+                                   symbol='circle'),
+                        text=[f"Area {damage['id']}"],  # Shorter text for less clutter
+                        textposition="top center",
+                        name=damage['label'],
+                        showlegend=True,
+                        hoverinfo='text',
+                        hovertext=[f"<b>Damage Area {damage['id']}</b><br>" +
+                                f"Severity: {damage['severity']}<br>" +
+                                f"Max deformation: {damage['max_damage']:.4f}<br>" +
+                                f"Avg deformation: {damage['avg_damage']:.4f}<br>" +
+                                f"Affected points: {damage['size']}<br>" +
+                                f"Approx. volume: {damage['volume']:.4f}<br>" +
+                                f"Approx. surface area: {damage['surface_area']:.4f}"],
+                        visible=True  # Labels are always visible
+                    ))
+
+            # Count how many traces we have
+            total_traces = len(fig.data)
+            print(f"Created {total_traces} traces in Plotly figure")
+            
+            # Update layout 
+            fig.update_layout(
+                title={
+                    'text': 'Damage Analysis - Both Meshes Comparison',
+                    'y': 0.95,
+                    'x': 0.5,
+                    'xanchor': 'center',
+                    'yanchor': 'top',
+                    'font': {'size': 20}
+                },
+                scene=dict(
+                    xaxis_title='X',
+                    yaxis_title='Y',
+                    zaxis_title='Z',
+                    aspectmode='data',
+                    camera=dict(
+                        eye=dict(x=1.5, y=1.5, z=1.2)
+                    ),
+                    domain=dict(x=[0, 1], y=[0, 1])
+                ),
+                margin=dict(l=10, r=100, t=60, b=10),
+                height=700,
+                width=1000
+            )
+            
+            # Generate plot data for frontend
+            plot_data = fig.data
+            plot_layout = fig.layout
             
         except Exception as e:
             print(f"Error creating visualization: {str(e)}")
-            traceback_str = traceback.format_exc()
-            print(f"Traceback: {traceback_str}")
             return jsonify({'error': f'Error creating visualization: {str(e)}'}), 500
         
-        # Get plotly JSON data
-        plot_data = fig.to_dict()['data']
-        plot_layout = fig.to_dict()['layout']
-        
-        # Count how many traces we have (needed for visibility settings)
-        total_traces = len(plot_data)
-        damage_mesh_indices = list(range(2, total_traces))
-        damage_label_indices = []
-        damage_submesh_indices = []
-
-        # Separate damage labels from damage meshes
-        for i in damage_mesh_indices:
-            if 'mode' in plot_data[i] and plot_data[i]['mode'] == 'markers+text':
-                damage_label_indices.append(i)
-            else:
-                damage_submesh_indices.append(i)
-
-        # Create visibility settings for each view
-        damaged_only_vis = [False, True] + [True if i in damage_label_indices else False for i in range(2, total_traces)]
-        original_only_vis = [True, False] + [True if i in damage_label_indices else False for i in range(2, total_traces)]
-        both_meshes_vis = [True, True] + [True if i in damage_label_indices else False for i in range(2, total_traces)]
-        damage_areas_only_vis = [False, False] + [True for i in range(2, total_traces)]
-        original_and_damage_vis = [True, False] + [True for i in range(2, total_traces)]
-        damaged_and_damage_vis = [False, True] + [True for i in range(2, total_traces)]
+        # Create visibility settings for the button actions
+        damaged_only_vis = [False, True] + [True for i in range(2, total_traces)]
+        original_only_vis = [True, False] + [True for i in range(2, total_traces)]
+        both_meshes_vis = [True, True] + [True for i in range(2, total_traces)]  # Match initial setting
         
         # Prepare response data
         response_data = {
-            'plot_data': plot_data,
-            'plot_layout': plot_layout,
+            'plot_data': [trace.to_plotly_json() for trace in plot_data],  # Convert to JSON format
+            'plot_layout': plot_layout.to_plotly_json(),                   # Convert to JSON format
             'total_vertices': len(mesh_damaged.vertices),
             'view_settings': {
                 'damaged_only_vis': damaged_only_vis,
                 'original_only_vis': original_only_vis,
-                'both_meshes_vis': both_meshes_vis,
-                'damage_areas_only_vis': damage_areas_only_vis,
-                'original_and_damage_vis': original_and_damage_vis,
-                'damaged_and_damage_vis': damaged_and_damage_vis
+                'both_meshes_vis': both_meshes_vis
             }
         }
+        
+        print("Successfully created visualization data")
         
         # Add damage clusters if available
         if damage_clusters:
@@ -2827,15 +2901,10 @@ def api_analyze_model_damage():
         return jsonify(response_data)
         
     except Exception as e:
+        import traceback
         traceback_str = traceback.format_exc()
         print(f"Unexpected error: {str(e)}")
         print(f"Traceback: {traceback_str}")
-        return jsonify({'error': f'Error analyzing model damage: {str(e)}'}), 500
-        
-    except Exception as e:
-        app.logger.error(f"Error analyzing model damage: {str(e)}")
-        traceback_str = traceback.format_exc()
-        app.logger.error(f"Traceback: {traceback_str}")
         return jsonify({'error': f'Error analyzing model damage: {str(e)}'}), 500
 
 # Also add this new route to get all models for comparison selection
