@@ -2490,71 +2490,97 @@ def compare_models(model1, model2):
 
 @app.route('/api/analyze_model_damage', methods=['POST'])
 def api_analyze_model_damage():
-    """API endpoint to analyze damage between two 3D models and return visualization data"""
+    """API endpoint to analyze damage between two 3D models with improved file handling"""
     try:
         # Get paths from request
         data = request.get_json()
-        if not data or 'original_path' not in data or 'damaged_path' not in data:
-            return jsonify({'error': 'Missing required parameters'}), 400
+        if not data:
+            return jsonify({'error': 'Missing request data'}), 400
             
-        # Get the base directory for model files
-        # This should be the absolute path to where your model files are stored
-        base_dir = os.path.join(os.getcwd(), 'static')  # Adjust this to your actual storage location
+        print(f"Received request data: {data}")
         
-        # Get the relative paths from the request
-        original_path = data['original_path']
-        damaged_path = data['damaged_path']
+        # Look for the models in a more comprehensive way
+        models_to_find = ['porsche_original.obj', 'porsche_damaged.obj']
+        model_paths = {}
         
-        # Print the paths for debugging
-        print(f"Original path from DB: {original_path}")
-        print(f"Damaged path from DB: {damaged_path}")
+        # Define common locations to search
+        search_locations = [
+            os.getcwd(),  # Current working directory
+            os.path.join(os.getcwd(), 'static'),
+            os.path.join(os.getcwd(), 'static', 'models'),
+            os.path.join(os.getcwd(), 'models'),
+            '/home/ubuntu/TFGDBA/static/models',
+            '/home/ubuntu/TFGDBA/models',
+        ]
         
-        # Try to find the files - first check if the paths are already absolute
-        if not os.path.exists(original_path):
-            # Try different combinations to find the file
-            possible_paths = [
-                original_path,
-                os.path.join(base_dir, original_path),
-                os.path.join(base_dir, os.path.basename(original_path)),
-                os.path.join(base_dir, 'models', os.path.basename(original_path))
-            ]
+        # Add any paths from the request
+        if 'original_path' in data and data['original_path']:
+            # Add both the path as-is and the basename
+            search_locations.append(data['original_path'])
+            search_locations.append(os.path.dirname(data['original_path']))
             
-            # Try each path
+        if 'damaged_path' in data and data['damaged_path']:
+            search_locations.append(data['damaged_path'])
+            search_locations.append(os.path.dirname(data['damaged_path']))
+        
+        # Look for the models
+        for model_name in models_to_find:
             found = False
-            for path in possible_paths:
-                print(f"Trying path: {path}")
-                if os.path.exists(path):
-                    original_path = path
-                    found = True
-                    print(f"Found original file at: {path}")
-                    break
-                    
-            if not found:
-                return jsonify({'error': f'Could not find original model file. Tried: {possible_paths}'}), 404
-        
-        # Same for damaged path
-        if not os.path.exists(damaged_path):
-            possible_paths = [
-                damaged_path,
-                os.path.join(base_dir, damaged_path),
-                os.path.join(base_dir, os.path.basename(damaged_path)),
-                os.path.join(base_dir, 'models', os.path.basename(damaged_path))
-            ]
             
-            found = False
-            for path in possible_paths:
-                print(f"Trying path: {path}")
-                if os.path.exists(path):
-                    damaged_path = path
+            # First, check common locations
+            for location in search_locations:
+                potential_path = os.path.join(location, model_name)
+                print(f"Checking: {potential_path}")
+                
+                if os.path.exists(potential_path) and os.path.isfile(potential_path):
+                    model_paths[model_name] = potential_path
                     found = True
-                    print(f"Found damaged file at: {path}")
+                    print(f"Found {model_name} at: {potential_path}")
                     break
-                    
+            
+            # If not found in common locations, do a more extensive search
             if not found:
-                return jsonify({'error': f'Could not find damaged model file. Tried: {possible_paths}'}), 404
+                print(f"Model {model_name} not found in common locations. Performing deeper search...")
+                search_result = []
+                
+                # Use find command to locate the file (faster than walking the directory tree)
+                try:
+                    import subprocess
+                    result = subprocess.run(['find', '/home/ubuntu', '-name', model_name], 
+                                           capture_output=True, text=True, timeout=30)
+                    if result.returncode == 0 and result.stdout:
+                        paths = result.stdout.strip().split('\n')
+                        for path in paths:
+                            if path and os.path.exists(path):
+                                search_result.append(path)
+                except Exception as e:
+                    print(f"Error during find command: {e}")
+                    
+                    # Fallback: use Python's os.walk (slower but more compatible)
+                    for root, dirs, files in os.walk('/home/ubuntu'):
+                        if model_name in files:
+                            path = os.path.join(root, model_name)
+                            search_result.append(path)
+                
+                if search_result:
+                    model_paths[model_name] = search_result[0]
+                    print(f"Found {model_name} through deep search at: {search_result[0]}")
+                    found = True
+            
+            if not found:
+                return jsonify({
+                    'error': f"Could not find {model_name} anywhere on the server. Please upload the file."
+                }), 404
+        
+        # Now we should have paths for both models
+        original_path = model_paths['porsche_original.obj']
+        damaged_path = model_paths['porsche_damaged.obj']
+        
+        print(f"Final paths to use:")
+        print(f"Original: {original_path}")
+        print(f"Damaged: {damaged_path}")
         
         # Load meshes
-        print(f"Loading meshes from: {original_path} and {damaged_path}")
         mesh_original, mesh_damaged = load_meshes(original_path, damaged_path)
         if mesh_original is None or mesh_damaged is None:
             return jsonify({'error': 'Failed to load mesh data'}), 500
@@ -2573,8 +2599,6 @@ def api_analyze_model_damage():
         
         # Count how many traces we have (needed for visibility settings)
         total_traces = len(plot_data)
-        mesh_original_idx = 0
-        mesh_damaged_idx = 1
         damage_mesh_indices = list(range(2, total_traces))
         damage_label_indices = []
         damage_submesh_indices = []
@@ -2634,6 +2658,8 @@ def api_analyze_model_damage():
         
     except Exception as e:
         app.logger.error(f"Error analyzing model damage: {str(e)}")
+        traceback_str = traceback.format_exc()
+        app.logger.error(f"Traceback: {traceback_str}")
         return jsonify({'error': f'Error analyzing model damage: {str(e)}'}), 500
 
 # Also add this new route to get all models for comparison selection
