@@ -214,6 +214,172 @@ def upload_form():
     </html>
     ''', gpu_available=USE_GPU)
 
+@app.route('/upload_porsche_models')
+def upload_porsche_models():
+    """Special page to upload the required Porsche models"""
+    return render_template_string('''
+    <!doctype html>
+    <html>
+    <head>
+        <title>Upload Porsche Models</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+            .container { max-width: 800px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+            h1 { color: #2d3748; }
+            p { color: #4a5568; margin-bottom: 25px; }
+            .upload-section { 
+                margin-bottom: 30px; 
+                padding: 20px; 
+                border-radius: 10px; 
+                background-color: #f7fafc; 
+                text-align: left;
+            }
+            .upload-section h2 { margin-top: 0; }
+            form { margin-bottom: 20px; }
+            .form-group { margin-bottom: 15px; }
+            label { display: block; margin-bottom: 5px; font-weight: bold; }
+            input[type="file"] { 
+                padding: 10px; 
+                width: 100%; 
+                border: 1px solid #e2e8f0; 
+                border-radius: 5px;
+            }
+            button {
+                background-color: #4299e1;
+                color: white;
+                padding: 10px 20px;
+                border: none;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            button:hover { background-color: #3182ce; }
+            .back-link {
+                display: inline-block;
+                margin-top: 20px;
+                color: #4299e1;
+                text-decoration: none;
+            }
+            .back-link:hover { text-decoration: underline; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Upload Porsche Models</h1>
+            <p>Upload the required Porsche models for damage analysis. Both files are required for comparison.</p>
+            
+            <div class="upload-section">
+                <h2>Upload Original Porsche Model</h2>
+                <form action="/upload_specific_model" method="post" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="original_model">Select porsche_original.obj file:</label>
+                        <input type="file" id="original_model" name="model_file" accept=".obj" required>
+                    </div>
+                    <input type="hidden" name="target_filename" value="porsche_original.obj">
+                    <button type="submit">Upload Original Model</button>
+                </form>
+            </div>
+            
+            <div class="upload-section">
+                <h2>Upload Damaged Porsche Model</h2>
+                <form action="/upload_specific_model" method="post" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="damaged_model">Select porsche_damaged.obj file:</label>
+                        <input type="file" id="damaged_model" name="model_file" accept=".obj" required>
+                    </div>
+                    <input type="hidden" name="target_filename" value="porsche_damaged.obj">
+                    <button type="submit">Upload Damaged Model</button>
+                </form>
+            </div>
+            
+            <a href="/" class="back-link">Back to Home</a>
+        </div>
+    </body>
+    </html>
+    ''')
+
+@app.route('/upload_specific_model', methods=['POST'])
+def upload_specific_model():
+    """Handle upload of a specific model file"""
+    if 'model_file' not in request.files:
+        return "No file part", 400
+        
+    file = request.files['model_file']
+    target_filename = request.form.get('target_filename', '')
+    
+    if file.filename == '':
+        return "No selected file", 400
+        
+    if not target_filename:
+        return "No target filename specified", 400
+    
+    # Create directory if it doesn't exist
+    upload_dir = os.path.join(os.getcwd(), 'static', 'models')
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    # Save the file with the target filename
+    filepath = os.path.join(upload_dir, target_filename)
+    file.save(filepath)
+    
+    # Update or insert the model in MongoDB
+    model_data = {
+        "filename": target_filename,
+        "name": target_filename,
+        "path": os.path.join('static', 'models', target_filename),
+        "filepath": filepath,
+        "created_at": datetime.datetime.now()
+    }
+    
+    # Update or insert
+    models_collection.update_one(
+        {"filename": target_filename},
+        {"$set": model_data},
+        upsert=True
+    )
+    
+    return render_template_string('''
+    <!doctype html>
+    <html>
+    <head>
+        <title>Model Upload Success</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; margin: 40px; background-color: #f9f9f9; }
+            .container { max-width: 800px; margin: auto; padding: 30px; background: #ffffff; border-radius: 15px; box-shadow: 0px 5px 20px rgba(0,0,0,0.1); }
+            h1 { color: #2d3748; }
+            .success { color: #38a169; font-weight: bold; }
+            .button-container { margin-top: 30px; }
+            .button {
+                display: inline-block;
+                padding: 10px 20px;
+                margin: 0 10px;
+                border-radius: 5px;
+                text-decoration: none;
+                color: white;
+                font-weight: bold;
+            }
+            .primary { background-color: #4299e1; }
+            .primary:hover { background-color: #3182ce; }
+            .secondary { background-color: #48bb78; }
+            .secondary:hover { background-color: #38a169; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Upload Successful</h1>
+            <p class="success">{{ filename }} has been uploaded successfully!</p>
+            <p>The file has been saved to: {{ filepath }}</p>
+            <p>The database has been updated with the file information.</p>
+            
+            <div class="button-container">
+                <a href="/upload_porsche_models" class="button primary">Upload More Models</a>
+                <a href="/select_models_to_compare" class="button secondary">Compare Models</a>
+            </div>
+        </div>
+    </body>
+    </html>
+    ''', filename=target_filename, filepath=filepath)
+
 @app.route('/model_progress')
 def get_model_progress():
     """Return the current progress of model creation as JSON"""
