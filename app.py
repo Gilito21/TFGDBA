@@ -2655,6 +2655,9 @@ def compare_models(model1, model2):
     ''', original_name=original_name, damaged_name=damaged_name, 
         original_path=original_path, damaged_path=damaged_path)
 
+# Make sure to add this import at the top of your file
+import traceback
+
 @app.route('/api/analyze_model_damage', methods=['POST'])
 def api_analyze_model_damage():
     """API endpoint to analyze damage between two 3D models with improved file handling"""
@@ -2667,98 +2670,70 @@ def api_analyze_model_damage():
         print(f"Received request data: {data}")
         
         # Look for the models in a more comprehensive way
-        models_to_find = ['porsche_original.obj', 'porsche_damaged.obj']
         model_paths = {}
         
-        # Define common locations to search
-        search_locations = [
-            os.getcwd(),  # Current working directory
-            os.path.join(os.getcwd(), 'static'),
-            os.path.join(os.getcwd(), 'static', 'models'),
-            os.path.join(os.getcwd(), 'models'),
-            '/home/ubuntu/TFGDBA/static/models',
-            '/home/ubuntu/TFGDBA/models',
-        ]
+        # Handle direct file paths from the request
+        original_path = data.get('original_path', '')
+        damaged_path = data.get('damaged_path', '')
         
-        # Add any paths from the request
-        if 'original_path' in data and data['original_path']:
-            # Add both the path as-is and the basename
-            search_locations.append(data['original_path'])
-            search_locations.append(os.path.dirname(data['original_path']))
-            
-        if 'damaged_path' in data and data['damaged_path']:
-            search_locations.append(data['damaged_path'])
-            search_locations.append(os.path.dirname(data['damaged_path']))
+        # Print the paths for debugging
+        print(f"Requested original path: {original_path}")
+        print(f"Requested damaged path: {damaged_path}")
         
-        # Look for the models
-        for model_name in models_to_find:
-            found = False
+        # Verify that the files exist
+        if not os.path.exists(original_path):
+            return jsonify({'error': f'Original model file not found at path: {original_path}'}), 404
             
-            # First, check common locations
-            for location in search_locations:
-                potential_path = os.path.join(location, model_name)
-                print(f"Checking: {potential_path}")
-                
-                if os.path.exists(potential_path) and os.path.isfile(potential_path):
-                    model_paths[model_name] = potential_path
-                    found = True
-                    print(f"Found {model_name} at: {potential_path}")
-                    break
-            
-            # If not found in common locations, do a more extensive search
-            if not found:
-                print(f"Model {model_name} not found in common locations. Performing deeper search...")
-                search_result = []
-                
-                # Use find command to locate the file (faster than walking the directory tree)
-                try:
-                    import subprocess
-                    result = subprocess.run(['find', '/home/ubuntu', '-name', model_name], 
-                                           capture_output=True, text=True, timeout=30)
-                    if result.returncode == 0 and result.stdout:
-                        paths = result.stdout.strip().split('\n')
-                        for path in paths:
-                            if path and os.path.exists(path):
-                                search_result.append(path)
-                except Exception as e:
-                    print(f"Error during find command: {e}")
-                    
-                    # Fallback: use Python's os.walk (slower but more compatible)
-                    for root, dirs, files in os.walk('/home/ubuntu'):
-                        if model_name in files:
-                            path = os.path.join(root, model_name)
-                            search_result.append(path)
-                
-                if search_result:
-                    model_paths[model_name] = search_result[0]
-                    print(f"Found {model_name} through deep search at: {search_result[0]}")
-                    found = True
-            
-            if not found:
-                return jsonify({
-                    'error': f"Could not find {model_name} anywhere on the server. Please upload the file."
-                }), 404
+        if not os.path.exists(damaged_path):
+            return jsonify({'error': f'Damaged model file not found at path: {damaged_path}'}), 404
         
-        # Now we should have paths for both models
-        original_path = model_paths['porsche_original.obj']
-        damaged_path = model_paths['porsche_damaged.obj']
-        
-        print(f"Final paths to use:")
-        print(f"Original: {original_path}")
-        print(f"Damaged: {damaged_path}")
+        print(f"Found original model at: {original_path}")
+        print(f"Found damaged model at: {damaged_path}")
         
         # Load meshes
-        mesh_original, mesh_damaged = load_meshes(original_path, damaged_path)
-        if mesh_original is None or mesh_damaged is None:
-            return jsonify({'error': 'Failed to load mesh data'}), 500
+        try:
+            print(f"Loading meshes from: {original_path} and {damaged_path}")
+            mesh_original, mesh_damaged = load_meshes(original_path, damaged_path)
+            
+            if mesh_original is None:
+                return jsonify({'error': f'Failed to load original mesh from {original_path}'}), 500
+                
+            if mesh_damaged is None:
+                return jsonify({'error': f'Failed to load damaged mesh from {damaged_path}'}), 500
+                
+            print(f"Successfully loaded meshes:")
+            print(f"Original mesh: {len(mesh_original.vertices)} vertices, {len(mesh_original.faces)} faces")
+            print(f"Damaged mesh: {len(mesh_damaged.vertices)} vertices, {len(mesh_damaged.faces)} faces")
+            
+        except Exception as e:
+            print(f"Error loading meshes: {str(e)}")
+            return jsonify({'error': f'Error loading meshes: {str(e)}'}), 500
             
         # Analyze damage
-        distances, damage_clusters = analyze_damage(mesh_original, mesh_damaged)
-        if distances is None:
-            return jsonify({'error': 'Failed to analyze mesh differences'}), 500
+        try:
+            print("Analyzing damage between meshes...")
+            distances, damage_clusters = analyze_damage(mesh_original, mesh_damaged)
+            
+            if distances is None:
+                return jsonify({'error': 'Failed to analyze mesh differences - incompatible meshes'}), 500
+                
+            print(f"Analysis complete. Found {len(damage_clusters) if damage_clusters else 0} damage clusters.")
+            
+        except Exception as e:
+            print(f"Error analyzing damage: {str(e)}")
+            return jsonify({'error': f'Error analyzing damage: {str(e)}'}), 500
             
         # Create improved visualization
-        fig = create_improved_visualization(mesh_original, mesh_damaged, distances, damage_clusters)
+        try:
+            print("Creating visualization...")
+            fig = create_improved_visualization(mesh_original, mesh_damaged, distances, damage_clusters)
+            print("Visualization created successfully.")
+            
+        except Exception as e:
+            print(f"Error creating visualization: {str(e)}")
+            traceback_str = traceback.format_exc()
+            print(f"Traceback: {traceback_str}")
+            return jsonify({'error': f'Error creating visualization: {str(e)}'}), 500
         
         # Get plotly JSON data
         plot_data = fig.to_dict()['data']
@@ -2822,6 +2797,12 @@ def api_analyze_model_damage():
             response_data['damage_clusters'] = serializable_clusters
         
         return jsonify(response_data)
+        
+    except Exception as e:
+        traceback_str = traceback.format_exc()
+        print(f"Unexpected error: {str(e)}")
+        print(f"Traceback: {traceback_str}")
+        return jsonify({'error': f'Error analyzing model damage: {str(e)}'}), 500
         
     except Exception as e:
         app.logger.error(f"Error analyzing model damage: {str(e)}")
