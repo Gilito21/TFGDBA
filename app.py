@@ -2488,6 +2488,18 @@ def compare_models(model1, model2):
         </div>
         
         <script>
+            // Enhanced Plotly configuration for 3D models
+            const plotlyConfig = {
+                responsive: true,
+                displayModeBar: true,
+                displaylogo: false,
+                modeBarButtonsToAdd: [
+                    'toImage',
+                    'resetCameraDefault3d'
+                ],
+                scrollZoom: true
+            };
+            
             // Function to process the damage data and update UI
             function updateDamageSummary(data) {
                 const summaryElement = document.getElementById('damageSummary');
@@ -2588,48 +2600,61 @@ def compare_models(model1, model2):
                     damaged_path: '{{ damaged_path }}'
                 }),
                 success: function(response) {
-                    // Update the loading visualization with the actual plot
+                    // Clear the loading indicator
                     document.getElementById('plotlyVisualization').innerHTML = '';
-                    Plotly.newPlot('plotlyVisualization', response.plot_data, response.plot_layout);
+                    
+                    console.log("Received plot data with " + response.plot_data.length + " traces");
+                    
+                    // Create the plot with both meshes visible initially
+                    Plotly.newPlot(
+                        'plotlyVisualization', 
+                        response.plot_data, 
+                        response.plot_layout,
+                        plotlyConfig
+                    );
+                    
+                    // Log initial visibility state for debugging
+                    const initialVisibility = response.plot_data.map(trace => trace.visible);
+                    console.log("Initial visibility:", initialVisibility);
                     
                     // Update damage information
                     updateDamageSummary(response);
                     
                     // Setup buttons for changing views
                     document.getElementById('btnDamagedOnly').addEventListener('click', function() {
-                        Plotly.update('plotlyVisualization', 
-                            {'visible': response.view_settings.damaged_only_vis},
-                            {'title': 'Damage Analysis - Damaged Mesh Only'});
+                        console.log("Setting visibility to damaged only");
+                        Plotly.restyle('plotlyVisualization', {
+                            'visible': response.view_settings.damaged_only_vis
+                        });
+                        Plotly.relayout('plotlyVisualization', {
+                            'title.text': 'Damage Analysis - Damaged Mesh Only'
+                        });
                     });
                     
                     document.getElementById('btnOriginalOnly').addEventListener('click', function() {
-                        Plotly.update('plotlyVisualization',
-                            {'visible': response.view_settings.original_only_vis},
-                            {'title': 'Damage Analysis - Original Mesh Only'});
+                        console.log("Setting visibility to original only");
+                        Plotly.restyle('plotlyVisualization', {
+                            'visible': response.view_settings.original_only_vis
+                        });
+                        Plotly.relayout('plotlyVisualization', {
+                            'title.text': 'Damage Analysis - Original Mesh Only'
+                        });
                     });
                     
                     document.getElementById('btnBothModels').addEventListener('click', function() {
-                        Plotly.update('plotlyVisualization',
-                            {'visible': response.view_settings.both_meshes_vis},
-                            {'title': 'Damage Analysis - Both Meshes Comparison'});
+                        console.log("Setting visibility to both meshes");
+                        Plotly.restyle('plotlyVisualization', {
+                            'visible': response.view_settings.both_meshes_vis
+                        });
+                        Plotly.relayout('plotlyVisualization', {
+                            'title.text': 'Damage Analysis - Both Meshes Comparison'
+                        });
                     });
                     
-                    document.getElementById('btnDamageAreas').addEventListener('click', function() {
-                        Plotly.update('plotlyVisualization',
-                            {'visible': response.view_settings.damage_areas_only_vis},
-                            {'title': 'Damage Analysis - Damage Areas Only'});
-                    });
-                    
-                    document.getElementById('btnOriginalWithDamage').addEventListener('click', function() {
-                        Plotly.update('plotlyVisualization',
-                            {'visible': response.view_settings.original_and_damage_vis},
-                            {'title': 'Damage Analysis - Original Mesh with Damage Areas'});
-                    });
-                    
-                    document.getElementById('btnDamagedWithDamage').addEventListener('click', function() {
-                        Plotly.update('plotlyVisualization',
-                            {'visible': response.view_settings.damaged_and_damage_vis},
-                            {'title': 'Damage Analysis - Damaged Mesh with Damage Areas'});
+                    // More responsive camera controls
+                    const plotDiv = document.getElementById('plotlyVisualization');
+                    plotDiv.on('plotly_relayout', function(eventData) {
+                        console.log('Camera position updated');
                     });
                 },
                 error: function(error) {
@@ -2643,13 +2668,16 @@ def compare_models(model1, model2):
                         <div style="text-align: center; padding: 30px;">
                             <h3>Error Loading Visualization</h3>
                             <p>Please make sure the model files exist and are accessible.</p>
+                            <div style="margin-top: 20px; color: #666; font-size: 0.9em;">
+                                <p>${error.responseJSON ? error.responseJSON.error : 'Unknown error'}</p>
+                            </div>
                         </div>
                     `;
                     document.getElementById('damageSummary').innerHTML = '<p>Error loading damage summary data.</p>';
                     document.getElementById('damageDetails').innerHTML = '<p>Error loading damage details.</p>';
                 }
             });
-        </script>
+</script>
     </body>
     </html>
     ''', original_name=original_name, damaged_name=damaged_name, 
