@@ -2093,9 +2093,32 @@ def compare_models(model1, model2):
         </html>
         ''')
 
-    # Get file paths
-    model1_path = model1_info.get("filepath", "")
-    model2_path = model2_info.get("filepath", "")
+    # Get file paths - KEY CHANGES HERE
+    # We need to get the actual path field from MongoDB
+    print(f"Model1 info: {model1_info}")
+    print(f"Model2 info: {model2_info}")
+    
+    # Extract the path field, or if not available, try to construct a path
+    model1_path = model1_info.get("path", "")
+    model2_path = model2_info.get("path", "")
+    
+    # If path field is empty or missing, try other fields and construct a path
+    if not model1_path:
+        # Check if there's a filepath field
+        model1_path = model1_info.get("filepath", "")
+        # If still empty, try to construct from a base directory + filename
+        if not model1_path:
+            base_dir = os.path.join(os.getcwd(), "static", "models")
+            model1_path = os.path.join(base_dir, model1)
+    
+    if not model2_path:
+        model2_path = model2_info.get("filepath", "")
+        if not model2_path:
+            base_dir = os.path.join(os.getcwd(), "static", "models")
+            model2_path = os.path.join(base_dir, model2)
+    
+    print(f"Using path for {model1}: {model1_path}")
+    print(f"Using path for {model2}: {model2_path}")
 
     # Determine which is original and which is damaged for proper analysis
     if "original" in model1.lower():
@@ -2243,6 +2266,15 @@ def compare_models(model1, model2):
             .back-link:hover {
                 text-decoration: underline;
             }
+            .error-message {
+                background-color: #f8d7da;
+                color: #721c24;
+                padding: 15px;
+                border-radius: 5px;
+                margin-bottom: 20px;
+                font-weight: bold;
+                display: none;
+            }
         </style>
     </head>
     <body>
@@ -2252,6 +2284,8 @@ def compare_models(model1, model2):
         </div>
         
         <div class="container">
+            <div class="error-message" id="errorMessage"></div>
+            
             <div class="visualization-container">
                 <div id="plotlyVisualization" class="loading">
                     <p>Loading visualization...</p>
@@ -2432,10 +2466,16 @@ def compare_models(model1, model2):
                     });
                 },
                 error: function(error) {
+                    // Show error message
+                    const errorElement = document.getElementById('errorMessage');
+                    errorElement.style.display = 'block';
+                    errorElement.textContent = error.responseJSON ? error.responseJSON.error : 'Error loading visualization';
+                    
+                    // Replace loading message
                     document.getElementById('plotlyVisualization').innerHTML = `
-                        <div style="color: red; padding: 30px;">
+                        <div style="text-align: center; padding: 30px;">
                             <h3>Error Loading Visualization</h3>
-                            <p>${error.responseText || 'Failed to analyze model damage. Please try again later.'}</p>
+                            <p>Please make sure the model files exist and are accessible.</p>
                         </div>
                     `;
                     document.getElementById('damageSummary').innerHTML = '<p>Error loading damage summary data.</p>';
