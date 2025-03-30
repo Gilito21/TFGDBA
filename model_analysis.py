@@ -6,29 +6,50 @@ import plotly.graph_objects as go
 from sklearn.cluster import DBSCAN
 import os
 
-def load_meshes(original_path='porsche_original.obj', damaged_path='porsche_damaged.obj'):
+def load_meshes(original_path, damaged_path):
     try:
         # Check if files exist
         if os.path.exists(original_path) and os.path.exists(damaged_path):
             print(f"Loading meshes from {original_path} and {damaged_path}")
-            mesh_original = trimesh.load(original_path)
-            mesh_damaged = trimesh.load(damaged_path)
+            
+            # Try to load with more options to handle different OBJ formats
+            mesh_original = trimesh.load(original_path, force='mesh')
+            mesh_damaged = trimesh.load(damaged_path, force='mesh')
 
             # Handle scene objects
             if isinstance(mesh_original, trimesh.Scene):
-                mesh_original = trimesh.util.concatenate(mesh_original.geometry.values())
+                print("Original mesh is a scene, concatenating geometry...")
+                mesh_original = mesh_original.dump(concatenate=True)
             if isinstance(mesh_damaged, trimesh.Scene):
-                mesh_damaged = trimesh.util.concatenate(mesh_damaged.geometry.values())
+                print("Damaged mesh is a scene, concatenating geometry...")
+                mesh_damaged = mesh_damaged.dump(concatenate=True)
+
+            # Ensure meshes have the right attributes
+            if not hasattr(mesh_original, 'vertices') or not hasattr(mesh_original, 'faces'):
+                print("Warning: Original mesh missing vertices or faces attributes")
+                return None, None
+                
+            if not hasattr(mesh_damaged, 'vertices') or not hasattr(mesh_damaged, 'faces'):
+                print("Warning: Damaged mesh missing vertices or faces attributes")
+                return None, None
 
             print(f"Original mesh: {len(mesh_original.vertices)} vertices, {len(mesh_original.faces)} faces")
             print(f"Damaged mesh: {len(mesh_damaged.vertices)} vertices, {len(mesh_damaged.faces)} faces")
 
             return mesh_original, mesh_damaged
         else:
-            print("Files not found.")
-            raise FileNotFoundError("Mesh files not found")
+            missing_files = []
+            if not os.path.exists(original_path):
+                missing_files.append(original_path)
+            if not os.path.exists(damaged_path):
+                missing_files.append(damaged_path)
+                
+            print(f"Files not found: {missing_files}")
+            raise FileNotFoundError(f"Mesh files not found: {missing_files}")
     except Exception as e:
         print(f"Error loading meshes: {e}")
+        traceback_str = traceback.format_exc()
+        print(f"Traceback: {traceback_str}")
         return None, None
 
 # Analysis functions (same as before)
@@ -195,7 +216,7 @@ def create_improved_visualization(mesh_original, mesh_damaged, distances, damage
     # Create figure with a larger size
     fig = go.Figure()
 
-    # Add the original mesh (initially invisible)
+    # Add the original mesh (now visible by default)
     fig.add_trace(go.Mesh3d(
         x=mesh_original.vertices[:, 0],
         y=mesh_original.vertices[:, 1],
@@ -206,11 +227,10 @@ def create_improved_visualization(mesh_original, mesh_damaged, distances, damage
         color='blue',
         opacity=0.5,
         name='Original Mesh',
-        visible=False
+        visible=True  # Changed from False to True
     ))
 
     # Add the damaged mesh with color based on damage intensity
-    # Fixed colorbar - using title as a dict with text and side properties
     fig.add_trace(go.Mesh3d(
         x=mesh_damaged.vertices[:, 0],
         y=mesh_damaged.vertices[:, 1],
@@ -263,7 +283,7 @@ def create_improved_visualization(mesh_original, mesh_damaged, distances, damage
                         opacity=0.9,
                         name=f"Damage {damage['id']} Mesh",
                         hoverinfo='name',
-                        visible=False  # Initially hidden
+                        visible=True  # Changed from False to True
                     ))
                 else:
                     # If we couldn't create a proper submesh, fallback to the convex hull
@@ -280,7 +300,7 @@ def create_improved_visualization(mesh_original, mesh_damaged, distances, damage
                             opacity=0.9,
                             name=f"Damage {damage['id']} Hull",
                             hoverinfo='name',
-                            visible=False  # Initially hidden
+                            visible=True  # Changed from False to True
                         ))
             except Exception as e:
                 print(f"Error creating damage mesh for cluster {damage['id']}: {e}")
@@ -322,12 +342,23 @@ def create_improved_visualization(mesh_original, mesh_damaged, distances, damage
         else:
             damage_submesh_indices.append(i)
 
-    # Create visibility settings for each view
-    damaged_only_vis = [False, True] + [True if i in damage_label_indices else False for i in range(2, total_traces)]
-    original_only_vis = [True, False] + [True if i in damage_label_indices else False for i in range(2, total_traces)]
+    # Create revised visibility settings for each view
+    # Both Original and Damaged meshes are visible by default in "Both Meshes" view
     both_meshes_vis = [True, True] + [True if i in damage_label_indices else False for i in range(2, total_traces)]
+    
+    # Only the damaged mesh is visible in "Damaged Mesh Only" view
+    damaged_only_vis = [False, True] + [True if i in damage_label_indices else False for i in range(2, total_traces)]
+    
+    # Only the original mesh is visible in "Original Mesh Only" view
+    original_only_vis = [True, False] + [True if i in damage_label_indices else False for i in range(2, total_traces)]
+    
+    # Only damage areas are visible in "Damage Areas Only" view
     damage_areas_only_vis = [False, False] + [True for i in range(2, total_traces)]
+    
+    # Original mesh and damage areas are visible in "Original + Damage Areas" view
     original_and_damage_vis = [True, False] + [True for i in range(2, total_traces)]
+    
+    # Damaged mesh and damage areas are visible in "Damaged + Damage Areas" view
     damaged_and_damage_vis = [False, True] + [True for i in range(2, total_traces)]
 
     # Add buttons for toggling views
@@ -389,7 +420,7 @@ def create_improved_visualization(mesh_original, mesh_damaged, distances, damage
             }
         ],
         title={
-            'text': 'Damage Analysis',
+            'text': 'Damage Analysis - Both Meshes Comparison',  # Default title shows what's visible
             'y': 0.95,  # Move title up slightly
             'x': 0.5,
             'xanchor': 'center',
