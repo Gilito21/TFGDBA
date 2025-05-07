@@ -40,7 +40,6 @@ TFGDBA is a powerful application that transforms ordinary videos into detailed 3
 <img src="https://raw.githubusercontent.com/gilito21/TFGDBA/main/assets/example2.gif" alt="Example 2"/>
 </td>
 </tr>
-</table>
 </div>
 
 ## ✨ Features
