@@ -30,17 +30,6 @@
 
 TFGDBA is a powerful application that transforms ordinary videos into detailed 3D models. Using advanced computer vision algorithms and GPU acceleration, it extracts frames, analyzes spatial information, and generates high-quality 3D representations for a variety of use cases.
 
-<div align="center">
-<table>
-<tr>
-<td width="50%">
-<img src="https://raw.githubusercontent.com/gilito21/TFGDBA/main/assets/example1.gif" alt="Example 1"/>
-</td>
-<td width="50%">
-<img src="https://raw.githubusercontent.com/gilito21/TFGDBA/main/assets/example2.gif" alt="Example 2"/>
-</td>
-</tr>
-</div>
 
 ## ✨ Features
 
